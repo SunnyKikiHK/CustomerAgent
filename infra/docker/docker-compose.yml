@@ -1,0 +1,120 @@
+services:
+  postgres:
+    image: pgvector/pgvector:pg14
+    container_name: agent_postgres
+    environment:
+      POSTGRES_USER: sunny
+      POSTGRES_PASSWORD: sunny
+      POSTGRES_DB: agent
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./packages/db/scripts/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    ports:
+      - 5433:5432 # use 5433 as local also has a postgresql
+    networks:
+      - postgres_network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U sunny -d agent"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+  temporal:
+    image: temporalio/auto-setup:1.24
+    container_name: agent_temporal
+    environment:
+      DB: postgres12
+      DB_PORT: "5432"
+      POSTGRES_USER: sunny
+      POSTGRES_PWD: sunny
+      POSTGRES_SEEDS: agent_postgres
+      DBNAME: temporal
+      VISIBILITY_DBNAME: temporal_visibility
+    ports:
+      - "7233:7233"
+    networks:
+      - postgres_network
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "temporal --address \"$(hostname -i):7233\" operator namespace describe --namespace default >/dev/null 2>&1"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 60s
+
+  redis:
+    image: redis:7-alpine
+    container_name: agent_redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    networks:
+      - postgres_network
+    restart: unless-stopped
+    command: >
+      redis-server
+      --appendonly yes
+      --appendfsync everysec
+      --maxmemory 512mb
+      --maxmemory-policy allkeys-lru
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  langfuse-web:
+    image: langfuse/langfuse:2
+    container_name: agent_langfuse-web
+    ports:
+      - "3000:3000"
+    environment:
+      DATABASE_URL: postgres://sunny:sunny@postgres:5432/langfuse # production example: postgres://sunny:sunny@aws-db-instance.rds.amazonaws.com:5432/langfuse
+      NEXTAUTH_SECRET: "${NEXTAUTH_SECRET}"
+      SALT: "${SALT}"
+      NEXTAUTH_URL: http://localhost:3000
+      TELEMETRY_ENABLED: "false" # controls whether the application anonymously reports usage data back to the developers who built it
+      HOSTNAME: "0.0.0.0" #explicitly overriding the HOSTNAME environment variable and setting it to 0.0.0.0 (the universal address for "listen to everything").
+    networks:
+      - postgres_network
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "-S", "--spider", "http://127.0.0.1:3000/api/public/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 60s
+
+  langfuse-worker:
+    image: langfuse/langfuse-worker:2
+    container_name: agent_langfuse-worker
+    environment:
+      DATABASE_URL: postgres://sunny:sunny@postgres:5432/langfuse
+      NEXTAUTH_SECRET: "${NEXTAUTH_SECRET}"
+      SALT: "${SALT}"
+      TELEMETRY_ENABLED: "false"
+    networks:
+      - postgres_network
+    depends_on:
+      postgres:
+        condition: service_healthy
+      langfuse-web:
+        condition: service_healthy
+    restart: unless-stopped
+
+volumes:
+  redis_data:
+  postgres_data:
+
+networks:
+  postgres_network:
