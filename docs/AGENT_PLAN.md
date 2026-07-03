@@ -27,18 +27,118 @@ Its responsibilities:
 
 ---
 
-## 2. Architecture Decision: Orchestrator-Subagent Runtime vs LangGraph Workflows
+## 2. Architecture Decision: Split Top-Level Agent Systems on a Shared P-E-R Runtime
 
-### Orchestrator-Subagent Pattern
+### Decision Summary
 
-The primary agent runtime uses a **Claude Code-style Orchestrator-Subagent pattern**:
+The platform uses **two top-level agent systems** because signal automation and customer conversation have different latency, memory, safety, and output requirements:
 
-- The **OrchestratorAgent** owns the request, tenant context, memory, policy, and final response.
-- **Subagents** receive bounded tasks with limited context and scoped tools.
-- Subagents return structured `SubagentResult` objects; they do not directly own long-term memory or final customer-visible output.
-- The Orchestrator merges subagent results, runs policy/critic checks, decides approved actions, and writes memory/audit logs.
+| Top-level system | Primary input | Primary purpose | Runtime style |
+|---|---|---|---|
+| `SignalOrchestrator` | `SignalAgentInput` / `CustomerSignal` | Proactive customer-success automation | Async/background P-E-R run |
+| `ConversationOrchestrator` | `ConversationAgentInput` / `ChatMessage` | Interactive customer-facing conversation | Low-latency/streaming P-E-R run |
 
-The shared ReAct loop remains useful, but it becomes a **subagent runtime primitive**, not the top-level architecture.
+They are separate orchestration systems, but they **share the same runtime primitives**:
+
+- `OrchestratorPlan`
+- `SubagentTask`
+- `SubagentResult`
+- `DelegationManager`
+- ephemeral subagent `ReActLoop`
+- `ComplianceCriticAgent`
+- tool dispatcher
+- memory and audit infrastructure
+- Langfuse tracing conventions
+
+This avoids a confusing generic orchestrator while also avoiding duplicated agent infrastructure.
+
+### Layered Multi-Agent Pattern
+
+Both top-level systems run the same **Planner → Executor → Reflector (P-E-R)** lifecycle:
+
+| P-E-R phase | Signal system owner | Conversation system owner | Shared responsibility |
+|---|---|---|---|
+| Planner | `SignalOrchestrator` | `ConversationOrchestrator` | Build an `OrchestratorPlan` of role-based `SubagentTask` objects |
+| Executor | `DelegationManager` | `DelegationManager` | Spin up scoped ephemeral subagents with local ReAct loops |
+| Reflector | `ComplianceCriticAgent` | `ComplianceCriticAgent` | Evaluate `SubagentResult` objects before output, writes, or streaming completion |
+
+The top-level orchestrator owns the request from start to finish. It is the master brain and synchronization coordinator for:
+
+- tenant configuration and multi-tenant global constraints;
+- memory selection and durable memory writes;
+- planning, dependency management, and subagent sequencing;
+- cross-subagent context packing and result reduction;
+- final approval, emission, and persistence decisions.
+
+Subagents are **not durable agents** and do not own the customer outcome. They are lightweight, single-turn workers created only during the Executor phase.
+
+### Why Two Top-Level Systems
+
+| Dimension | `SignalOrchestrator` | `ConversationOrchestrator` |
+|---|---|---|
+| Trigger | Backend/system event | Customer message or chat turn |
+| Sender | Webhook, scheduled detector, CRM/billing sync, analytics job, CSM dashboard, or conversation-derived event | Authenticated chat endpoint |
+| Latency target | Seconds to minutes | Sub-second first token when streaming |
+| Memory | Account memory and signal history; conversation memory optional | Conversation memory required |
+| Output | Draft outreach, Slack alert, CRM update request, escalation, QBR/refund workflow | Customer-facing chat response |
+| Side-effect risk | Wrong proactive action or external mutation | Bad customer-facing answer or unsafe disclosure |
+| Long-running support | Common; can hand off to LangGraph/Temporal | Rare; should stay bounded and responsive |
+
+### Subagent Isolation and Skill Prompts
+
+Neither top-level orchestrator executes raw low-level script tools from its own context window. During the Executor phase it delegates work to dedicated sub-nodes via customized **Skill Prompts**. Each `SubagentTask` specifies a role, objective, allowed tools, local input, dependency IDs, and output contract.
+
+| Subagent role | Used by signal? | Used by conversation? | Example purpose |
+|---|---:|---:|---|
+| `HealthAnalysisAgent` | Yes | Sometimes | Analyze account health, usage trend, tickets, NPS, renewal risk |
+| `PlaybookRetrievalAgent` | Yes | Sometimes | Retrieve and rank relevant CS playbooks, policies, and KB docs |
+| `OutreachDraftAgent` | Yes | Rarely | Draft customer-safe proactive email/Slack/CRM text |
+| `CustomerChatAgent` | Rarely | Yes | Interpret chat intent and compose conversational answer candidates |
+| `ComplianceCriticAgent` | Yes | Yes | Review aggregated results before writes or customer-visible output |
+
+A conversation run can use subagents beyond `CustomerChatAgent`. For example, a customer asking “why did our usage drop before renewal?” may trigger `HealthAnalysisAgent` and `PlaybookRetrievalAgent`, then return to `CustomerChatAgent` for final conversational wording.
+
+### Context Boundaries
+
+Subagents are **spin-up, tear-down entities**:
+
+1. The top-level orchestrator builds a scoped `SubagentTask` and tenant-safe context packet.
+2. A subagent receives only the task objective, local params, allowed tool list, memory slice, and dependency markdown selected by the orchestrator.
+3. The subagent runs an internal ReAct loop on local parameters only.
+4. The subagent returns a structured `SubagentResult`.
+5. The subagent instance and transient scratchpad are immediately garbage-collected.
+
+Subagents must not write long-term memory, emit final customer-visible output, mutate external services directly, or access unrelated tenant/global context. All durable side effects are gated by the top-level orchestrator and the Reflector phase.
+
+```mermaid
+flowchart TD
+    A[Inbound trigger] --> B{Trigger type}
+    B -->|CustomerSignal| S[SignalOrchestrator]
+    B -->|ChatMessage| C[ConversationOrchestrator]
+
+    S --> SP[Signal Planner]
+    C --> CP[Conversation Planner]
+
+    SP --> D[Shared DelegationManager]
+    CP --> D
+
+    D --> H[HealthAnalysisAgent]
+    D --> P[PlaybookRetrievalAgent]
+    D --> O[OutreachDraftAgent]
+    D --> CH[CustomerChatAgent]
+
+    H --> R[Aggregated SubagentResults]
+    P --> R
+    O --> R
+    CH --> R
+
+    R --> X[ComplianceCriticAgent]
+    X --> Y{Approved?}
+    Y -->|yes| Z[Emit response / approved action request]
+    Y -->|no| W[Replan, redact, or escalate]
+    Z --> M[Memory + audit write]
+    W --> M
+```
 
 ### Domain Boundary Decision
 
@@ -47,69 +147,77 @@ The shared ReAct loop remains useful, but it becomes a **subagent runtime primit
 - `CustomerSignal` = business event / automation trigger / async workflow input.
 - `ChatMessage` = customer conversation turn / synchronous chat input / memory-backed thread.
 
-They only meet at the orchestrator boundary through an `AgentInput` wrapper. Do not merge them into
-one generic payload model; their lifecycle, latency requirements, safety policy, and memory behavior differ.
+They should not be merged. The dispatch layer may expose a union type for routing, but after routing the system should call either `SignalOrchestrator` or `ConversationOrchestrator`.
 
 ### Runtime Decision Matrix
 
 | Scenario | Runtime | Reason |
 |---|---|---|
-| Plain Q&A, intent classification | Orchestrator → CustomerChatAgent | Low latency, memory-aware, streams response |
-| Multi-tool chain, ≤ 5 steps, < 30s | Orchestrator + ReAct-capable subagent | Bounded delegation with scoped tools |
-| Proactive outreach from `CustomerSignal` | Orchestrator → specialist subagents | Health/playbook/draft/critic can be isolated |
-| Customer-facing chat | Orchestrator → CustomerChatAgent → optional specialists | Uses `ChatMessage`, memory, streaming |
-| Complex multi-step (QBR generation, > 30s) | LangGraph Python + subagents | Needs checkpoint, long-running execution |
-| Human-in-the-loop approval (refund > threshold) | LangGraph Python | Interrupt + checkpoint required |
-| Compliance/audit requiring full replay | LangGraph Python + audit log | Replay/debuggability |
-| Long wait steps ("wait 48h for reply") | Temporal (already in stack) | Process crash resilience |
+| Usage drop, renewal risk, NPS drop, support escalation | `SignalOrchestrator` P-E-R | Async proactive automation with account-memory and action policy |
+| Customer-facing chat turn | `ConversationOrchestrator` P-E-R | Low-latency conversational loop with required memory |
+| Chat asks account-health question | `ConversationOrchestrator` → `CustomerChatAgent` + `HealthAnalysisAgent` → critic | Conversation remains top-level owner; specialists supply evidence |
+| Proactive outreach from signal | `SignalOrchestrator` → health/playbook/draft subagents → critic | Specialist work is isolated; final action is centrally approved |
+| Complex multi-step QBR generation | LangGraph nodes call `SignalOrchestrator`/subagents for bounded work | Needs checkpoint, long-running execution, replay |
+| Human-in-the-loop refund approval | LangGraph + orchestrator-approved action packets | Interrupt + checkpoint required |
+| Long wait steps ("wait 48h for reply") | Temporal owns wait; `SignalOrchestrator` handles active steps | Process crash resilience |
 
-### Orchestrator-Subagent Stack
+### Shared Runtime Stack
 
 For normal agent execution, we use direct Python components without Mastra:
 
+```text
+SignalOrchestrator / ConversationOrchestrator
+  ├─ Planner phase
+  │    ├─ loads tenant config + appropriate memory slices
+  │    ├─ applies global tenant constraints
+  │    └─ creates OrchestratorPlan[list[SubagentTask]]
+  ├─ Executor phase
+  │    ├─ DelegationManager spins up ephemeral role subagents
+  │    ├─ each subagent runs a scoped ReActLoop
+  │    └─ collects SubagentResult objects
+  ├─ Reflector phase
+  │    ├─ ComplianceCriticAgent reviews aggregated results
+  │    ├─ validates PII, security, and business policy
+  │    └─ blocks, redacts, replans, escalates, or approves
+  └─ emits final response/action request, writes memory + audit log
+
+Ephemeral subagent
+  ├─ receives Skill Prompt + SubagentTask + scoped context packet
+  ├─ may call only allowed tools through its local ReActLoop
+  └─ returns SubagentResult, then is discarded
 ```
-OrchestratorAgent
-  ├─ loads tenant config + memory
-  ├─ creates SubagentTask objects
-  ├─ delegates to scoped subagents
-  │    ├─ HealthAnalysisAgent
-  │    ├─ PlaybookRetrievalAgent
-  │    ├─ OutreachDraftAgent
-  │    ├─ CustomerChatAgent
-  │    └─ ComplianceCriticAgent
-  ├─ reduces SubagentResult objects into a FinalDecision
-  └─ writes memory + audit log
 
-Subagents
-  └─ may use shared ReAct loop: LLM → tool call → result → LLM → ...
-```
+The shared ReAct loop is a **subagent runtime primitive**, not the top-level architecture.
 
-We deliberately **do not** use Mastra Python. The Orchestrator-Subagent runtime, delegation dispatcher,
-and ReAct loop are implemented directly with Python + `openai` SDK, keeping the system explicit and auditable.
-
+We deliberately **do not** use Mastra Python. The P-E-R runtime, delegation manager, and ReAct loop are implemented directly with Python + `openai` SDK, keeping the system explicit and auditable.
 
 ### LangGraph Python Stack
 
-For workflows requiring **checkpoint + interrupt**, we use `langgraph` (the official
-LangGraph Python SDK):
+For workflows requiring **checkpoint + interrupt**, we use `langgraph` (the official LangGraph Python SDK). LangGraph owns durability; it does not replace the P-E-R control loop for active reasoning steps.
 
-```
+```text
 langgraph StateGraph
-  └─ node: "gather_data" → calls Orchestrator/subagents for bounded work
+  └─ node: "gather_data" → calls SignalOrchestrator or shared subagents for bounded work
   └─ node: "wait_for_approval" → interrupt
-  └─ node: "execute_action" → approved tool/action execution
+  └─ node: "execute_action" → submits orchestrator-approved action packet
 ```
 
 ### Decision Tree (from input to runtime)
 
-```
+```text
 Input arrives
 ├── CustomerSignal?
-│   └── Orchestrator → HealthAnalysisAgent → PlaybookRetrievalAgent → OutreachDraftAgent → ComplianceCriticAgent
+│   └── SignalOrchestrator P-E-R
+│       ├── Planner: signal-specific OrchestratorPlan[SubagentTask]
+│       ├── Executor: ephemeral specialist subagents
+│       └── Reflector: ComplianceCriticAgent before emission/mutation
 ├── ChatMessage?
-│   └── Orchestrator → memory load → CustomerChatAgent → optional specialists → ComplianceCriticAgent
+│   └── ConversationOrchestrator P-E-R
+│       ├── Planner: conversation-specific OrchestratorPlan[SubagentTask]
+│       ├── Executor: CustomerChatAgent plus optional specialist subagents
+│       └── Reflector: ComplianceCriticAgent before final/streamed response
 └── Long-running / approval / replay needed?
-    └── LangGraph or Temporal owns durability; Orchestrator/subagents do bounded work inside steps
+    └── LangGraph or Temporal owns durability; orchestrators do bounded active work inside steps
 ```
 
 ---
@@ -122,24 +230,23 @@ apps/agent-service/
 │   ├── __init__.py
 │   ├── rq_worker.py           # RQ worker entry point (existing)
 │   │
-│   ├── agent/                 # NEW — agent engine (Python-first)
+│   ├── agent/                 # NEW — shared Orchestrator/Subagent runtime (Python-first)
 │   │   ├── __init__.py
 │   │   │
-│   │   ├── types.py          # Shared Pydantic types (TaskPlan, TaskResult, etc.)
+│   │   ├── types.py          # Shared Pydantic types (SessionContext, AgentResponse, etc.)
 │   │   │
-│   │   ├── planner.py        # P-E-R: Planner — decomposes signals into task plans
-│   │   ├── executor.py       # P-E-R: Executor — ReAct tool-calling loop
-│   │   ├── reflector.py      # P-E-R: Reflector — validates outcome against intent
+│   │   ├── signal/           # SignalOrchestrator and signal-specific planner/reducer
+│   │   ├── conversation/     # ConversationOrchestrator, chat planner, streaming coordination
+│   │   ├── orchestrator/     # Shared base orchestrator, reducer, policy helpers
+│   │   ├── subagents/        # Health, playbook, outreach, chat, compliance specialists
+│   │   ├── runtime/          # ReAct loop, delegation manager, context packing, tool caller
 │   │   │
-│   │   ├── react_loop.py     # Core ReAct loop: LLM → tool call → result → LLM
-│   │   ├── tool_caller.py    # Tool call dispatcher (routes to skill-gateway)
-│   │   ├── chat.py           # Customer chat handler (multi-turn ReAct + memory)
-│   │   │
-│   │   └── registry.py       # Per-tenant agent factory (loads config, builds system prompt)
+│   │   ├── chat.py           # Backward-compatible chat integration wrapper during migration
+│   │   └── registry.py       # Orchestrator/subagent registry
 │   │
 │   ├── workflow/
 │   │   ├── __init__.py
-│   │   ├── orchestrate.py    # Top-level: decides Python Agent vs LangGraph per task
+│   │   ├── orchestrate.py    # Top-level: decides Orchestrator-Subagent vs LangGraph per task
 │   │   │
 │   │   └── langgraph/        # LangGraph Python workflows
 │   │       ├── __init__.py
@@ -150,7 +257,7 @@ apps/agent-service/
 packages/agent/                # NEW — shared agent primitives (imported by agent-service)
 ├── src/
 │   ├── __init__.py
-│   ├── types.py              # TaskPlan, TaskResult, SessionContext, AgentResponse, CustomerSignal
+│   ├── types.py              # SessionContext, AgentResponse, CustomerSignal
 │   ├── config.py             # AgentConfig per tenant (system prompt, tool list, model)
 │   ├── chat_types.py         # ChatMessage, ChatRequest, ChatResponse (Target Phase)
 │   └── memory.py             # Tenant-scoped conversation memory (Target Phase)
@@ -169,11 +276,18 @@ The current flat `agent/` layout should evolve into this structure during the Ta
 
 ```text
 apps/agent-service/src/agent/
+├── signal/
+│   ├── signal_orchestrator.py      # SignalOrchestrator: async CustomerSignal workflows
+│   ├── signal_planner.py           # Signal-specific plan creation
+│   └── signal_reducer.py           # Builds proactive action candidates
+├── conversation/
+│   ├── conversation_orchestrator.py # ConversationOrchestrator: chat/message workflows
+│   ├── conversation_planner.py      # Chat-specific plan creation
+│   └── streaming.py                 # Streaming-safe response emission
 ├── orchestrator/
-│   ├── orchestrator.py      # OrchestratorAgent: owns context, policy, final decision
-│   ├── planner.py           # Builds SubagentTask delegation plan
-│   ├── reducer.py           # Merges SubagentResult objects
-│   └── policy.py            # Approval/guardrail rules
+│   ├── base.py                      # Shared P-E-R orchestration base/protocols
+│   ├── reducer.py                   # Shared SubagentResult aggregation helpers
+│   └── policy.py                    # Approval/guardrail rules
 ├── subagents/
 │   ├── base.py              # BaseSubagent protocol
 │   ├── health_analysis.py   # HealthAnalysisAgent
@@ -207,11 +321,13 @@ They are separate domain objects and meet only through `AgentInput` in `orchestr
 |---|---|
 | `packages/db/src/schema.sql` | Add `task_history`, `subagent_calls`, `orchestrator_runs`, and memory tables for audit |
 | `apps/agent-service/src/rq_worker.py` | Import and call `orchestrate()` instead of inline logic |
-| `apps/agent-service/src/agent/orchestrator/` | New OrchestratorAgent, delegation planner, reducer, and policy layer |
-| `apps/agent-service/src/agent/subagents/` | New specialist subagents: health, playbook, outreach draft, chat, compliance critic |
-| `packages/agent/src/orchestration_types.py` | Add `AgentInput`, `OrchestratorPlan`, `FinalDecision` |
+| `apps/agent-service/src/agent/signal/` | New `SignalOrchestrator`, signal planner, and signal reducer for proactive workflows |
+| `apps/agent-service/src/agent/conversation/` | New `ConversationOrchestrator`, conversation planner, and streaming coordinator |
+| `apps/agent-service/src/agent/orchestrator/` | Shared base orchestration, reducer helpers, and policy layer |
+| `apps/agent-service/src/agent/subagents/` | Shared specialist subagents: health, playbook, outreach draft, chat, compliance critic |
+| `packages/agent/src/orchestration_types.py` | Add `SignalAgentInput`, `ConversationAgentInput`, optional dispatch union, `OrchestratorPlan`, `FinalDecision` |
 | `packages/agent/src/subagent_types.py` | Add `AgentRole`, `SubagentTask`, `SubagentResult` |
-| `packages/llm-gateway/src/router.py` | Future plan: add `model_for_agent_task()` method for orchestrator/subagent routing |
+| `packages/llm-gateway/src/router.py` | Future plan: add `model_for_agent_task()` method for Orchestrator/Subagent routing |
 | `apps/skill-gateway/src/index.py` | Future plan: sandboxed execution backend for approved tool calls |
 | `requirements.txt` | Add `openai`, `langgraph`, `pydantic`, `httpx` |
 
@@ -231,131 +347,237 @@ All types use **Pydantic v2** for validation, serialization, and JSON Schema gen
 
 ### Agent Domain Separation
 
-The plan keeps the two input domains separate:
+The plan keeps the two input domains separate at the top-level orchestrator boundary:
 
-- `CustomerSignal` is a business event that triggers automation.
-- `ChatMessage` is a conversation turn in a customer chat session.
-- `AgentInput` is the orchestrator boundary wrapper that accepts either one.
+- `CustomerSignal` is a business event that triggers `SignalOrchestrator`.
+- `ChatMessage` is a conversation turn that triggers `ConversationOrchestrator`.
+- `AgentDispatchInput` is optional glue at the API/worker routing layer only. Business logic should operate on `SignalAgentInput` or `ConversationAgentInput`, not a vague generic input.
 
 ```python
 # packages/agent/src/orchestration_types.py
+from __future__ import annotations
+
 from enum import Enum
-from typing import Optional
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 from packages.agent.types import CustomerSignal
 from packages.agent.chat_types import ChatMessage
 
 
 class AgentInputType(str, Enum):
     SIGNAL = "signal"
-    CHAT = "chat"
+    CONVERSATION = "conversation"
 
 
-class AgentInput(BaseModel):
-    """Unified orchestrator boundary; domain objects remain separate."""
-    type: AgentInputType
+class SignalAgentInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     tenant_id: str
     customer_id: str
-    session_id: Optional[str] = None
-    signal: Optional[CustomerSignal] = None
-    message: Optional[ChatMessage] = None
+    signal: CustomerSignal
+    requested_by_user_id: str | None = None
+
+
+class ConversationAgentInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    tenant_id: str
+    customer_id: str
+    session_id: str
+    message: ChatMessage
+    stream: bool = True
+
+
+class AgentDispatchInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    type: AgentInputType
+    signal_input: SignalAgentInput | None = None
+    conversation_input: ConversationAgentInput | None = None
 
     @model_validator(mode="after")
-    def exactly_one_domain_input(self):
-        if self.type == AgentInputType.SIGNAL and not self.signal:
-            raise ValueError("signal input requires CustomerSignal")
-        if self.type == AgentInputType.CHAT and not self.message:
-            raise ValueError("chat input requires ChatMessage")
+    def exactly_one_routed_input(self):
+        if self.type == AgentInputType.SIGNAL and not self.signal_input:
+            raise ValueError("signal dispatch requires SignalAgentInput")
+        if self.type == AgentInputType.CONVERSATION and not self.conversation_input:
+            raise ValueError("conversation dispatch requires ConversationAgentInput")
+        if self.signal_input and self.conversation_input:
+            raise ValueError("dispatch input cannot include both signal and conversation inputs")
         return self
 ```
 
 ### Orchestrator/Subagent Types
 
+The Planner phase produces an `OrchestratorPlan`, not a flat list of raw tool tasks. Each task describes a **subagent role** and a bounded handoff contract. The Executor phase turns these tasks into ephemeral subagent runs, and the Reflector phase evaluates the aggregated results before any write or customer-visible emission.
+
+| Model | Created by | Consumed by | Purpose |
+|---|---|---|---|
+| `OrchestratorPlan` | Planner phase | Delegation manager | Ordered role-based subagent sequence |
+| `SubagentTask` | Orchestrator planner | Ephemeral subagent | Scoped objective, tool boundary, dependency contract |
+| `SubagentContextPacket` | Delegation manager | Ephemeral subagent | Tenant-safe local context and previous markdown outputs |
+| `SubagentResult` | Ephemeral subagent | Orchestrator reducer + critic | Structured result, markdown summary, tool evidence |
+| `ComplianceReview` | Reflector phase | Orchestrator | Approval, redactions, policy findings, blocked writes |
+| `FinalDecision` | Orchestrator | API/workflow caller | Approved response/action payload only |
+
 ```python
 # packages/agent/src/subagent_types.py
+from __future__ import annotations
+
 from enum import Enum
-from typing import Optional
-from pydantic import BaseModel, Field
+from typing import Any, Literal
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class AgentRole(str, Enum):
-    ORCHESTRATOR = "orchestrator"
     HEALTH_ANALYSIS = "health_analysis"
     PLAYBOOK_RETRIEVAL = "playbook_retrieval"
     OUTREACH_DRAFT = "outreach_draft"
     CUSTOMER_CHAT = "customer_chat"
     COMPLIANCE_CRITIC = "compliance_critic"
-    ACTION_EXECUTION = "action_execution"  # Future: when write actions move behind skill-gateway
+    ACTION_EXECUTION = "action_execution"
 
 
 class SubagentTask(BaseModel):
-    id: str
-    role: AgentRole
-    objective: str
-    input: dict = Field(default_factory=dict)
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    id: str = Field(description="Stable task ID generated by the Orchestrator planner")
+    role: AgentRole = Field(description="Specialist subagent role to instantiate")
+    objective: str = Field(description="Single bounded outcome for this subagent")
+    skill_prompt: str = Field(description="Role-specific prompt template selected by Orchestrator")
+    input: dict[str, Any] = Field(default_factory=dict)
     allowed_tools: list[str] = Field(default_factory=list)
     depends_on: list[str] = Field(default_factory=list)
-    max_tokens: int = 2000
+    max_react_steps: int = Field(default=6, ge=1, le=12)
+    max_tokens: int = Field(default=2000, ge=256, le=8000)
+    output_format: Literal["markdown_and_json"] = "markdown_and_json"
+
+    def is_ready(self, completed: set[str]) -> bool:
+        return all(task_id in completed for task_id in self.depends_on)
+
+
+class SubagentContextPacket(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    tenant_id: str
+    customer_id: str
+    trace_id: str | None = None
+    task: SubagentTask
+    tenant_constraints: list[str] = Field(default_factory=list)
+    memory_excerpt: str | None = None
+    dependency_markdown: dict[str, str] = Field(default_factory=dict)
+    dependency_data: dict[str, dict[str, Any]] = Field(default_factory=dict)
+
+
+class ToolCallRecord(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    tool_name: str
+    success: bool
+    arguments_redacted: dict[str, Any] = Field(default_factory=dict)
+    result_redacted: dict[str, Any] = Field(default_factory=dict)
 
 
 class SubagentResult(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     task_id: str
     role: AgentRole
     success: bool
-    summary: str
-    data: dict = Field(default_factory=dict)
-    tool_calls: list[str] = Field(default_factory=list)
-    error: Optional[str] = None
+    markdown: str = Field(description="Human-readable summary safe for downstream prompt injection")
+    data: dict[str, Any] = Field(default_factory=dict)
+    tool_calls: list[ToolCallRecord] = Field(default_factory=list)
+    tokens_used: int = 0
+    error: str | None = None
 ```
 
 ```python
 # packages/agent/src/orchestration_types.py
+from __future__ import annotations
+
+from enum import Enum
+from typing import Any, Literal
+from pydantic import BaseModel, ConfigDict, Field
+from packages.agent.subagent_types import SubagentResult, SubagentTask
+
+
+class OrchestratorPhase(str, Enum):
+    PLANNER = "planner"
+    EXECUTOR = "executor"
+    REFLECTOR = "reflector"
+
+
 class OrchestratorPlan(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     goal: str
-    tasks: list[SubagentTask]
+    tasks: list[SubagentTask] = Field(min_length=1, max_length=8)
     requires_critic: bool = True
+    global_constraints: list[str] = Field(default_factory=list)
+    reasoning_summary: str = Field(description="Brief non-sensitive planning rationale")
+
+
+class ComplianceFinding(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    code: str
+    severity: Literal["low", "medium", "high", "blocker"]
+    message: str
+    affected_task_ids: list[str] = Field(default_factory=list)
+
+
+class ComplianceReview(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    approved: bool
+    findings: list[ComplianceFinding] = Field(default_factory=list)
+    pii_detected: bool = False
+    redactions: dict[str, str] = Field(default_factory=dict)
+    blocked_external_writes: list[dict[str, Any]] = Field(default_factory=list)
+    feedback: str
 
 
 class FinalDecision(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     action: str
     response_text: str
-    approved_tool_calls: list[str] = Field(default_factory=list)
+    approved_external_writes: list[dict[str, Any]] = Field(default_factory=list)
+    subagent_results: list[SubagentResult] = Field(default_factory=list)
+    compliance_review: ComplianceReview
     reasoning_summary: str
 ```
 
 ### Core Types
 
+`TaskPlan`/`TaskResult` should not be the primary runtime contract for the Target Phase. Keep low-level tool schemas in the skill system, but the agent runtime exchanges `OrchestratorPlan`, `SubagentTask`, `SubagentResult`, `ComplianceReview`, and `FinalDecision`.
+
 ```python
 # packages/agent/src/types.py
 from __future__ import annotations
+
 import uuid
 from datetime import datetime
-from enum import Enum
-from typing import Optional
-from pydantic import BaseModel, Field
-
-
-class TaskType(str, Enum):
-    QUERY = "query"       # read-only
-    MUTATION = "mutation" # write operation
+from typing import Any
+from pydantic import BaseModel, ConfigDict, Field
+from packages.agent.orchestration_types import FinalDecision
+from packages.agent.subagent_types import SubagentResult
 
 
 class CustomerSignal(BaseModel):
-    """A signal/event that triggers an agent run. The primary trigger input."""
+    model_config = ConfigDict(extra="forbid")
+
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))
     tenant_id: str
     customer_id: str
-    type: str                          # e.g. "usage_drop", "nps_change", "renewal_due"
-    payload: dict = Field(default_factory=dict)  # type-specific data
+    type: str
+    payload: dict[str, Any] = Field(default_factory=dict)
     created_at: datetime = Field(default_factory=datetime.utcnow)
-    # Derived fields from payload
+
     @property
-    def health_score(self) -> Optional[float]:
+    def health_score(self) -> float | None:
         return self.payload.get("health_score")
 
     @property
     def signal_text(self) -> str:
-        """Human-readable description of the signal, used as Planner input."""
         type_labels = {
             "usage_drop": f"Usage dropped {self.payload.get('pct', '?')}% week-over-week",
             "nps_change": f"NPS score changed from {self.payload.get('from_nps')} to {self.payload.get('to_nps')}",
@@ -365,33 +587,9 @@ class CustomerSignal(BaseModel):
         return type_labels.get(self.type, str(self.payload))
 
 
-class TaskPlan(BaseModel):
-    """A single task in a Planner-generated plan."""
-    id: str = Field(default_factory=lambda: f"task_{uuid.uuid4().hex[:8]}")
-    description: str                           # natural-language for Executor / LLM
-    skill: Optional[str] = None              # skill name in skill-gateway registry
-    params: dict = Field(default_factory=dict)
-    depends_on: list[str] = Field(default_factory=list)  # list of task IDs
-    type: TaskType = TaskType.QUERY
-    estimated_duration_seconds: int = 5
-
-    @property
-    def is_ready(self, completed: set[str]) -> bool:
-        """Check if all dependencies are satisfied."""
-        return all(dep_id in completed for dep_id in self.depends_on)
-
-
-class TaskResult(BaseModel):
-    """Result of executing a single TaskPlan."""
-    task_id: str
-    success: bool
-    data: Optional[dict] = None
-    error: Optional[str] = None
-    tokens_used: int = 0
-
-
 class LLMUsage(BaseModel):
-    """Token usage from a single LLM call."""
+    model_config = ConfigDict(extra="forbid")
+
     prompt_tokens: int = 0
     completion_tokens: int = 0
 
@@ -401,23 +599,26 @@ class LLMUsage(BaseModel):
 
 
 class AgentResponse(BaseModel):
-    """Final response from the P-E-R engine."""
+    model_config = ConfigDict(extra="forbid")
+
     text: str
-    tasks: list[TaskResult] = Field(default_factory=list)
+    subagent_results: list[SubagentResult] = Field(default_factory=list)
     planner_tokens: int = 0
-    reflector_tokens: int = 0
-    skipped_reflector: bool = False
-    satisfied: Optional[bool] = None        # only set when reflector ran
-    feedback: Optional[str] = None          # only set when reflector ran
+    executor_tokens: int = 0
+    critic_tokens: int = 0
+    approved: bool = False
+    final_decision: FinalDecision | None = None
+    feedback: str | None = None
 
 
 class SessionContext(BaseModel):
-    """Runtime context passed through every layer of the agent engine."""
+    model_config = ConfigDict(extra="forbid")
+
     tenant_id: str
     user_id: str
     session_id: str
-    signal_id: str                          # CustomerSignal.id
-    trace_id: Optional[str] = None           # for Langfuse/OpenTelemetry correlation
+    signal_id: str
+    trace_id: str | None = None
 ```
 
 ### AgentConfig per Tenant
@@ -433,10 +634,10 @@ class AgentConfig(BaseModel):
     name: str
     instructions: str                       # system prompt
     model: str                              # e.g. "claude-sonnet-4-7-2025-06-09"
-    planner_model: str                       # model for Planner/Reflector (can differ from Executor)
+    planner_model: str                       # model for Orchestrator/critic (can differ from subagents)
     tools: list[str]                        # list of available skill names
-    skip_reflector_for_simple: bool = True  # auto-skip for single-query tasks
-    max_replan_attempts: int = 2           # max Reflector → Planner retry cycles
+    skip_critic_for_simple: bool = True     # auto-skip for single-query tasks
+    max_replan_attempts: int = 2           # max critic → delegation planner retry cycles
     memory_enabled: bool = True             # conversation memory (Target Phase; required for chat)
     pii_masking_enabled: bool = True       # mask PII before LLM calls
 ```
@@ -448,7 +649,7 @@ Config is loaded from `tenants` DB table at startup and cached in Redis with a 5
 ## 5. Tool Definitions
 
 Tools live in `packages/skill-system/src/tools/` and are registered in the skill-gateway registry.
-The Python Agent references them by name and dispatches via HTTP to skill-gateway.
+The Orchestrator/Subagent runtime references them by name and dispatches via HTTP to skill-gateway.
 
 ### 5.1 Core CS Tools (Phase 1 — MVP)
 
@@ -594,280 +795,316 @@ def get_tools_for_tenant(tenant_config: AgentConfig) -> list[dict]:
 
 ---
 
-## 6. Orchestrator-Subagent Implementation
+## 6. Shared Runtime and Top-Level Orchestrator Implementation
 
-The Target Phase runtime is an Orchestrator-Subagent system. The older P-E-R terms map into this
-architecture as follows:
+The Target Phase uses two top-level systems on one shared runtime:
 
-| Previous P-E-R concept | Orchestrator-Subagent replacement |
-|---|---|
-| Planner | Orchestrator delegation planner creates `SubagentTask` objects |
-| Executor | Delegation dispatcher runs subagents and their scoped ReAct loops |
-| Reflector | `ComplianceCriticAgent` + Orchestrator reducer/policy checks |
-| ReAct loop | Shared runtime primitive used inside subagents that need tools |
+| Top-level orchestrator | Planner module | Entry point | Shared runtime pieces |
+|---|---|---|---|
+| `SignalOrchestrator` | `agent/signal/signal_planner.py` | `run_signal_agent()` | `DelegationManager`, `ReActLoop`, subagents, critic |
+| `ConversationOrchestrator` | `agent/conversation/conversation_planner.py` | `run_conversation_agent()` | `DelegationManager`, `ReActLoop`, subagents, critic |
 
-The following implementation snippets keep some legacy names for continuity, but the implementation
-should place them under `orchestrator/`, `subagents/`, and `runtime/` as shown in §3.
+Both orchestrators run Planner → Executor → Reflector. The Planner differs by input domain; the Executor and Reflector are shared.
 
-### 6.1 Delegation Planner
+### 6.1 Domain-Specific Planners
 
-The Planner is a single LLM call that decomposes a `CustomerSignal` into a list of `TaskPlan`.
+Planner modules produce an `OrchestratorPlan` of `SubagentTask` objects. They do not emit raw tool execution tasks.
 
 ```python
-# apps/agent-service/src/agent/planner.py
-import json
-from packages.agent.types import CustomerSignal, TaskPlan, TaskType, LLMUsage, SessionContext
-from packages.llm_gateway import chat_completions
+# apps/agent-service/src/agent/orchestrator/planning_prompts.py
+from packages.agent.orchestration_types import OrchestratorPlan
+from packages.agent.subagent_types import AgentRole
 
 
-async def run_planner(
-    signal: CustomerSignal,
-    ctx: SessionContext,
-    available_skills: list[str],
-    config: AgentConfig,
-) -> tuple[list[TaskPlan], LLMUsage]:
-    """
-    Decompose a CustomerSignal into an ordered task plan via a single LLM call.
+ROLE_SKILL_PROMPTS: dict[AgentRole, str] = {
+    AgentRole.HEALTH_ANALYSIS: "Analyze customer health using only scoped account-health inputs.",
+    AgentRole.PLAYBOOK_RETRIEVAL: "Retrieve and rank playbooks relevant to the signal and tenant policy.",
+    AgentRole.OUTREACH_DRAFT: "Draft safe customer outreach using prior subagent markdown as evidence.",
+    AgentRole.CUSTOMER_CHAT: "Answer the chat turn using bounded memory and approved read-only tools.",
+}
 
-    Returns:
-        plans: ordered list of TaskPlan objects
-        usage: token usage for the planner LLM call
-    """
-    skill_list = ", ".join(available_skills) if available_skills else "(no skills available)"
 
-    messages = [
-        {
-            "role": "system",
-            "content": (
-                "You are a Customer Success Planner. Given a customer signal, decompose it into "
-                "an ordered task plan using the available skills.\n\n"
-                "Rules:\n"
-                "- Each task corresponds to exactly one skill\n"
-                "- If task B depends on task A's result, add task A's id to B's depends_on\n"
-                "- Read-only actions (query_*) are type: query; write actions (send_*, update_*) are type: mutation\n"
-                "- Maximum 5 tasks per plan\n"
-                "- For simple signals (single check), return a 1-task plan — Executor will skip Reflector\n"
-                "- Output a valid JSON object with a 'plans' key (list) and a 'reasoning' key (str)"
-            ),
-        },
-        {
-            "role": "user",
-            "content": (
-                f"Signal: {signal.signal_text}\n"
-                f"Customer ID: {signal.customer_id}\n"
-                f"Tenant ID: {signal.tenant_id}\n"
-                f"Health score: {signal.health_score or 'unknown'}\n"
-                f"Available skills: {skill_list}\n"
-            ),
-        },
+def attach_skill_prompts(plan: OrchestratorPlan) -> OrchestratorPlan:
+    tasks = [
+        task.model_copy(update={"skill_prompt": task.skill_prompt or ROLE_SKILL_PROMPTS[task.role]})
+        for task in plan.tasks
     ]
+    return plan.model_copy(update={"tasks": tasks})
+```
 
+```python
+# apps/agent-service/src/agent/signal/signal_planner.py
+from __future__ import annotations
+
+import json
+from packages.agent.config import AgentConfig
+from packages.agent.orchestration_types import OrchestratorPlan, SignalAgentInput
+from packages.agent.types import LLMUsage, SessionContext
+from packages.llm_gateway import chat_completions
+from apps.agent_service.src.agent.orchestrator.planning_prompts import attach_skill_prompts
+
+
+async def build_signal_plan(
+    signal_input: SignalAgentInput,
+    ctx: SessionContext,
+    config: AgentConfig,
+    tenant_constraints: list[str],
+    memory_excerpt: str | None,
+    critic_feedback: str | None = None,
+) -> tuple[OrchestratorPlan, LLMUsage]:
     response = await chat_completions.create(
         model=config.planner_model,
-        messages=messages,
+        messages=[
+            {
+                "role": "system",
+                "content": (
+                    "You are the Planner phase of SignalOrchestrator. Build an OrchestratorPlan "
+                    "for proactive customer-success automation. Plan role-based SubagentTask objects, "
+                    "not raw tool calls. Prefer HealthAnalysisAgent, PlaybookRetrievalAgent, and "
+                    "OutreachDraftAgent when the signal may require proactive outreach. "
+                    "Always require ComplianceCriticAgent review before writes or customer-visible output."
+                ),
+            },
+            {
+                "role": "user",
+                "content": json.dumps(
+                    {
+                        "tenant_id": ctx.tenant_id,
+                        "customer_id": signal_input.customer_id,
+                        "signal": signal_input.signal.model_dump(mode="json"),
+                        "available_tools": config.tools,
+                        "tenant_constraints": tenant_constraints,
+                        "account_memory_excerpt": memory_excerpt,
+                        "critic_feedback": critic_feedback,
+                    },
+                    default=str,
+                ),
+            },
+        ],
         response_format={"type": "json_object"},
         tenant_id=ctx.tenant_id,
-        trace_name="planner",
-        trace_metadata={"signal_id": ctx.signal_id},
+        trace_name="signal_planner",
+        trace_metadata={"signal_id": ctx.signal_id, "phase": "planner"},
     )
+    plan = OrchestratorPlan.model_validate(json.loads(response.choices[0].message.content))
+    return attach_skill_prompts(plan), LLMUsage(
+        prompt_tokens=response.usage.prompt_tokens,
+        completion_tokens=response.usage.completion_tokens,
+    )
+```
 
-    content = response.choices[0].message.content
-    parsed = json.loads(content)
+```python
+# apps/agent-service/src/agent/conversation/conversation_planner.py
+from __future__ import annotations
 
-    plans = [TaskPlan(**p) for p in parsed["plans"]]
-    usage = LLMUsage(
+import json
+from packages.agent.config import AgentConfig
+from packages.agent.orchestration_types import ConversationAgentInput, OrchestratorPlan
+from packages.agent.subagent_types import AgentRole
+from packages.agent.types import LLMUsage, SessionContext
+from packages.llm_gateway import chat_completions
+from apps.agent_service.src.agent.orchestrator.planning_prompts import ROLE_SKILL_PROMPTS, attach_skill_prompts
+
+
+async def build_conversation_plan(
+    conversation_input: ConversationAgentInput,
+    ctx: SessionContext,
+    config: AgentConfig,
+    tenant_constraints: list[str],
+    conversation_memory: str,
+    critic_feedback: str | None = None,
+) -> tuple[OrchestratorPlan, LLMUsage]:
+    response = await chat_completions.create(
+        model=config.planner_model,
+        messages=[
+            {
+                "role": "system",
+                "content": (
+                    "You are the Planner phase of ConversationOrchestrator. Build an OrchestratorPlan "
+                    "for a low-latency customer conversation turn. Start with CustomerChatAgent for "
+                    "intent and conversational framing. Add specialist subagents only when the user asks "
+                    "for account facts, health analysis, renewal context, policy, or playbook-backed advice. "
+                    "Always require ComplianceCriticAgent before final customer-visible output."
+                ),
+            },
+            {
+                "role": "user",
+                "content": json.dumps(
+                    {
+                        "tenant_id": ctx.tenant_id,
+                        "customer_id": conversation_input.customer_id,
+                        "session_id": conversation_input.session_id,
+                        "message": conversation_input.message.model_dump(mode="json"),
+                        "available_roles": [role.value for role in ROLE_SKILL_PROMPTS],
+                        "available_tools": config.tools,
+                        "tenant_constraints": tenant_constraints,
+                        "conversation_memory": conversation_memory,
+                        "critic_feedback": critic_feedback,
+                    },
+                    default=str,
+                ),
+            },
+        ],
+        response_format={"type": "json_object"},
+        tenant_id=ctx.tenant_id,
+        trace_name="conversation_planner",
+        trace_metadata={"session_id": conversation_input.session_id, "phase": "planner"},
+    )
+    plan = OrchestratorPlan.model_validate(json.loads(response.choices[0].message.content))
+    return attach_skill_prompts(plan), LLMUsage(
         prompt_tokens=response.usage.prompt_tokens,
         completion_tokens=response.usage.completion_tokens,
     )
 
-    return plans, usage
 ```
 
 ### 6.2 Core ReAct Loop
 
-The heart of the Python Agent is the **ReAct loop** (Reasoning + Acting). This is the equivalent
-of Mastra's `generate()`/`stream()` tool-calling mechanism, implemented directly with the openai SDK.
+The ReAct loop is an isolated subagent primitive. It is instantiated per `SubagentTask`, seeded with a skill prompt and `SubagentContextPacket`, and terminated after the subagent returns.
 
 ```python
-# apps/agent-service/src/agent/react_loop.py
-import json
+# apps/agent-service/src/agent/runtime/react_loop.py
+from __future__ import annotations
+
 import asyncio
-from typing import AsyncGenerator, Optional
-from openai import AsyncStream
-from packages.agent.types import (
-    CustomerSignal, SessionContext, TaskResult, TaskPlan,
-    LLMUsage, AgentConfig,
-)
-from packages.llm_gateway import chat_completions
-from packages.agent.tool_caller import dispatch_tool_call
+import json
+from packages.agent.config import AgentConfig
+from packages.agent.subagent_types import SubagentContextPacket, SubagentResult, ToolCallRecord
+from packages.agent.types import LLMUsage, SessionContext
+from packages.agent.runtime.tool_caller import dispatch_tool_call
 from packages.agent import registry as tool_registry
-
-
-MAX_REACT_STEPS = 10   # prevent infinite loops
+from packages.llm_gateway import chat_completions
 
 
 class ReActLoop:
-    """
-    ReAct (Reasoning + Acting) loop: the core of the Python Agent.
-
-    Each iteration:
-    1. LLM generates a response (may include a tool call)
-    2. If tool call: execute it, append result to messages, repeat
-    3. If text response: return it
-
-    This replaces what Mastra's Agent.generate() / agent.stream() do internally.
-    """
-
-    def __init__(
-        self,
-        signal: CustomerSignal,
-        ctx: SessionContext,
-        config: AgentConfig,
-        initial_plans: list[TaskPlan],
-    ):
-        self.signal = signal
+    def __init__(self, *, packet: SubagentContextPacket, ctx: SessionContext, config: AgentConfig) -> None:
+        self.packet = packet
         self.ctx = ctx
         self.config = config
-        self.plans = initial_plans
         self.messages: list[dict] = []
-        self.tool_results: list[TaskResult] = []
-        self.total_usage = LLMUsage()
+        self.tool_calls: list[ToolCallRecord] = []
+        self.usage = LLMUsage()
 
-    def _build_system_prompt(self) -> str:
-        """Build the system prompt from config.instructions + available tools."""
-        skill_docs = []
-        for name in self.config.tools:
-            tool_def = tool_registry.get_tool_definition(name)
-            func = tool_def["function"]
-            skill_docs.append(
-                f"- {func['name']}: {func['description']}\n"
-                f"  Parameters: {json.dumps(func['parameters'], indent=2)}"
-            )
+    def _system_prompt(self) -> str:
+        task = self.packet.task
+        tool_docs = []
+        for tool_name in task.allowed_tools:
+            tool_def = tool_registry.get_tool_definition(tool_name)
+            fn = tool_def["function"]
+            tool_docs.append(f"- {fn['name']}: {fn['description']}")
 
         return (
-            f"{self.config.instructions}\n\n"
-            f"Available tools:\n" + "\n".join(skill_docs) + "\n\n"
-            "You have access to these tools. Use them to fulfill the user's request.\n"
-            "Always respond with a tool call or a text answer. Do not hallucinate tool parameters."
+            f"{task.skill_prompt}\n\n"
+            "You are an ephemeral subagent. Complete only the assigned task. "
+            "Do not write long-term memory, do not emit final customer-visible output, "
+            "and do not call tools outside the allowed list.\n\n"
+            f"Objective: {task.objective}\n"
+            f"Tenant constraints: {json.dumps(self.packet.tenant_constraints)}\n"
+            f"Allowed tools:\n" + "\n".join(tool_docs) + "\n\n"
+            "Return final content as markdown plus a compact JSON data object."
         )
 
-    async def run(self) -> tuple[str, list[TaskResult], LLMUsage]:
-        """
-        Run the ReAct loop until the LLM produces a text answer.
-
-        Returns:
-            text: the final text response
-            tool_results: all tool execution results
-            total_usage: cumulative token usage
-        """
-        self.messages = [
-            {"role": "system", "content": self._build_system_prompt()},
+    def _user_context(self) -> str:
+        dependency_markdown = "\n\n".join(
+            f"## Prior result: {task_id}\n{markdown}"
+            for task_id, markdown in self.packet.dependency_markdown.items()
+        )
+        return json.dumps(
             {
-                "role": "user",
-                "content": (
-                    f"Tenant: {self.ctx.tenant_id}\n"
-                    f"Customer: {self.signal.customer_id}\n"
-                    f"Signal: {self.signal.signal_text}\n"
-                    f"Health score: {self.signal.health_score or 'unknown'}\n"
-                ),
+                "tenant_id": self.packet.tenant_id,
+                "customer_id": self.packet.customer_id,
+                "task_input": self.packet.task.input,
+                "memory_excerpt": self.packet.memory_excerpt,
+                "previous_subagent_markdown": dependency_markdown,
+                "previous_subagent_data": self.packet.dependency_data,
             },
+            default=str,
+        )
+
+    async def run(self) -> SubagentResult:
+        task = self.packet.task
+        self.messages = [
+            {"role": "system", "content": self._system_prompt()},
+            {"role": "user", "content": self._user_context()},
         ]
 
-        for step in range(MAX_REACT_STEPS):
+        for step in range(task.max_react_steps):
             response = await chat_completions.create(
                 model=self.config.model,
                 messages=self.messages,
-                tools=[tool_registry.get_tool_definition(name) for name in self.config.tools],
+                tools=[tool_registry.get_tool_definition(name) for name in task.allowed_tools],
                 tenant_id=self.ctx.tenant_id,
-                trace_name=f"react_step_{step}",
-                trace_metadata={"signal_id": self.ctx.signal_id, "step": step},
+                trace_name=f"subagent_{task.role.value}_react_step",
+                trace_metadata={"task_id": task.id, "step": step, "phase": "executor"},
             )
-
-            self.total_usage.prompt_tokens += response.usage.prompt_tokens
-            self.total_usage.completion_tokens += response.usage.completion_tokens
-
+            self.usage.prompt_tokens += response.usage.prompt_tokens
+            self.usage.completion_tokens += response.usage.completion_tokens
             message = response.choices[0].message
 
-            # Case 1: text response — loop terminates
-            if message.content and (not message.tool_calls):
-                self.messages.append({"role": "assistant", "content": message.content})
-                return message.content, self.tool_results, self.total_usage
+            if message.content and not message.tool_calls:
+                return SubagentResult(
+                    task_id=task.id,
+                    role=task.role,
+                    success=True,
+                    markdown=message.content,
+                    data={"final_markdown": message.content},
+                    tool_calls=self.tool_calls,
+                    tokens_used=self.usage.total,
+                )
 
-            # Case 2: tool calls — execute each, append results
             if message.tool_calls:
                 self.messages.append({
                     "role": "assistant",
                     "content": message.content or "",
                     "tool_calls": [
-                        {"id": tc.id, "function": {"name": tc.function.name, "arguments": tc.function.arguments}}
-                        for tc in message.tool_calls
+                        {"id": call.id, "function": {"name": call.function.name, "arguments": call.function.arguments}}
+                        for call in message.tool_calls
                     ],
                 })
+                await asyncio.gather(*(self._execute_tool_call(call) for call in message.tool_calls))
 
-                # Execute all tool calls in this turn (can be parallel)
-                tool_tasks = [
-                    self._execute_tool_call(tc)
-                    for tc in message.tool_calls
-                ]
-                results = await asyncio.gather(*tool_tasks, return_exceptions=True)
-
-                for result in results:
-                    if isinstance(result, Exception):
-                        # Log error, continue loop
-                        self.messages.append({
-                            "role": "tool",
-                            "tool_call_id": "unknown",
-                            "content": json.dumps({"error": str(result)}),
-                        })
-                    # tool result appended in _execute_tool_call
-
-            # Case 3: no content, no tool calls — unexpected, terminate
-            if not message.content and not message.tool_calls:
-                return "[No response from model]", self.tool_results, self.total_usage
-
-        # Max steps reached
-        return (
-            "[Agent reached maximum ReAct steps. Please simplify the request.]",
-            self.tool_results,
-            self.total_usage,
+        return SubagentResult(
+            task_id=task.id,
+            role=task.role,
+            success=False,
+            markdown="",
+            data={},
+            tool_calls=self.tool_calls,
+            tokens_used=self.usage.total,
+            error="Subagent reached max_react_steps",
         )
 
-    async def _execute_tool_call(self, tool_call) -> TaskResult:
-        """Execute a single tool call and append the result to messages."""
+    async def _execute_tool_call(self, tool_call) -> None:
+        task = self.packet.task
         tool_name = tool_call.function.name
-        try:
-            params = json.loads(tool_call.function.arguments)
-        except json.JSONDecodeError:
-            err = f"Invalid JSON arguments for {tool_name}: {tool_call.function.arguments}"
-            self.messages.append({"role": "tool", "tool_call_id": tool_call.id, "content": json.dumps({"error": err})})
-            return TaskResult(task_id=tool_name, success=False, error=err)
+        if tool_name not in task.allowed_tools:
+            content = json.dumps({"error": f"Tool {tool_name} is not allowed for {task.role.value}"})
+            self.messages.append({"role": "tool", "tool_call_id": tool_call.id, "content": content})
+            self.tool_calls.append(ToolCallRecord(tool_name=tool_name, success=False))
+            return
 
-        # Inject tenant_id into params if not present
-        if "tenant_id" not in params:
-            params["tenant_id"] = self.ctx.tenant_id
-
-        try:
-            result_data = await dispatch_tool_call(tool_name, params, self.ctx)
-            content = json.dumps(result_data)
-            success = True
-        except Exception as exc:
-            content = json.dumps({"error": str(exc)})
-            success = False
-
-        self.messages.append({"role": "tool", "tool_call_id": tool_call.id, "content": content})
-
-        return TaskResult(
-            task_id=tool_name,
-            success=success,
-            data=json.loads(content) if success else None,
-            error=None if success else content,
+        params = json.loads(tool_call.function.arguments)
+        params.setdefault("tenant_id", self.ctx.tenant_id)
+        result = await dispatch_tool_call(tool_name, params, self.ctx)
+        self.messages.append({"role": "tool", "tool_call_id": tool_call.id, "content": json.dumps(result, default=str)})
+        self.tool_calls.append(
+            ToolCallRecord(
+                tool_name=tool_name,
+                success=True,
+                arguments_redacted=_redact_for_audit(params),
+                result_redacted=_redact_for_audit(result),
+            )
         )
+
+
+def _redact_for_audit(value: dict) -> dict:
+    return {key: "[REDACTED]" if key.lower() in {"email", "recipient_email", "phone"} else val for key, val in value.items()}
 ```
 
 ### 6.3 Tool Dispatcher
 
 ```python
-# apps/agent-service/src/agent/tool_caller.py
+# apps/agent-service/src/agent/runtime/tool_caller.py
 import httpx
 from packages.agent.types import SessionContext
 
@@ -937,382 +1174,348 @@ async def _dispatch_to_skill_gateway(
         return result["data"]
 ```
 
-### 6.4 Executor (Task-level, above ReAct)
+### 6.4 Delegation Manager
 
-The Executor layer sits above the ReAct loop. It handles:
-
-1. **Dependency injection** — pre-execute a dependency task if not yet done
-2. **Result passing** — inject dependency results into the current task's context
-3. **Partial execution** — skip dependent tasks if a dependency failed
+`apps/agent-service/src/agent/runtime/delegation.py` is a subagent manager, not a flat tool runner. It instantiates isolated `ReActLoop` instances for each `SubagentTask`, injects previous subagent markdown into dependent tasks, and returns structured `SubagentResult` objects.
 
 ```python
-# apps/agent-service/src/agent/executor.py
+# apps/agent-service/src/agent/runtime/delegation.py
+from __future__ import annotations
+
 import asyncio
-from packages.agent.types import (
-    TaskPlan, TaskResult, SessionContext, TaskType, AgentConfig,
-)
-from packages.agent.react_loop import ReActLoop
+from packages.agent.config import AgentConfig
+from packages.agent.orchestration_types import OrchestratorPlan
+from packages.agent.subagent_types import SubagentContextPacket, SubagentResult
+from packages.agent.types import SessionContext
+from apps.agent_service.src.agent.runtime.react_loop import ReActLoop
 
 
 async def execute_tasks(
-    plans: list[TaskPlan],
+    *,
+    plan: OrchestratorPlan,
     ctx: SessionContext,
     config: AgentConfig,
-    signal: "CustomerSignal",   # forward ref
-) -> list[TaskResult]:
-    """
-    Execute tasks in dependency order using a topological-sort strategy.
-
-    - Tasks with no dependencies are parallelized via asyncio.gather
-    - Tasks with satisfied dependencies are executed after dependencies complete
-    - If a dependency fails, dependent tasks are skipped (not executed)
-
-    Time complexity is O(n²) with n≤5 — not a bottleneck.
-    The real win: parallel execution reduces total time from n*T_llm to depth*T_llm.
-    """
-    result_map: dict[str, TaskResult] = {}
+    customer_id: str,
+    tenant_constraints: list[str],
+    memory_excerpt: str | None,
+) -> list[SubagentResult]:
+    result_map: dict[str, SubagentResult] = {}
     completed: set[str] = set()
-    pending = list(plans)
-    all_results: list[TaskResult] = []
+    pending = list(plan.tasks)
+    all_results: list[SubagentResult] = []
 
     while pending:
-        # Find all tasks whose dependencies are satisfied
-        ready = [p for p in pending if p.is_ready(completed)]
-
+        ready = [task for task in pending if task.is_ready(completed)]
         if not ready:
-            # Remaining tasks have unsatisfied dependencies — stop
             break
 
-        # Execute ready tasks in parallel
-        tasks = [
-            _execute_single(plan, result_map, ctx, config, signal)
-            for plan in ready
-        ]
-        batch_results = await asyncio.gather(*tasks, return_exceptions=True)
+        batch = await asyncio.gather(
+            *(
+                _run_subagent(
+                    task_id=task.id,
+                    plan=plan,
+                    result_map=result_map,
+                    ctx=ctx,
+                    config=config,
+                    customer_id=customer_id,
+                    tenant_constraints=tenant_constraints,
+                    memory_excerpt=memory_excerpt,
+                )
+                for task in ready
+            ),
+            return_exceptions=True,
+        )
 
-        for plan, result in zip(ready, batch_results):
-            if isinstance(result, Exception):
-                task_result = TaskResult(task_id=plan.id, success=False, error=str(result))
-            else:
-                task_result = result
+        for task, item in zip(ready, batch):
+            result = item if isinstance(item, SubagentResult) else SubagentResult(
+                task_id=task.id,
+                role=task.role,
+                success=False,
+                markdown="",
+                error=str(item),
+            )
+            result_map[task.id] = result
+            all_results.append(result)
+            if result.success:
+                completed.add(task.id)
 
-            result_map[plan.id] = task_result
-            all_results.append(task_result)
-
-            if task_result.success:
-                completed.add(plan.id)
-            else:
-                # On failure: do NOT execute tasks that depend on this one
-                # (they remain in pending and will be skipped)
-                pass
-
-        # Remove executed from pending
-        pending = [p for p in pending if p.id not in completed]
+        attempted = {task.id for task in ready}
+        pending = [task for task in pending if task.id not in attempted]
 
     return all_results
 
 
-async def _execute_single(
-    plan: TaskPlan,
-    result_map: dict[str, TaskResult],
+async def _run_subagent(
+    *,
+    task_id: str,
+    plan: OrchestratorPlan,
+    result_map: dict[str, SubagentResult],
     ctx: SessionContext,
     config: AgentConfig,
-    signal: "CustomerSignal",
-) -> TaskResult:
-    """
-    Execute a single TaskPlan using the ReAct loop.
-
-    Before running the loop, inject dependency results into the task description
-    so the LLM has full context.
-    """
-    # Build enriched context: inject dependency results
-    dependency_context = ""
-    if plan.depends_on:
-        dep_lines = []
-        for dep_id in plan.depends_on:
-            dep_result = result_map.get(dep_id)
-            if dep_result:
-                dep_lines.append(f"[{dep_id}] {dep_result.data or dep_result.error}")
-        if dep_lines:
-            dependency_context = "\n\nRelevant context from previous steps:\n" + "\n".join(dep_lines)
-
-    # Run ReAct loop with enriched description
-    enriched_signal = signal
-    # (In practice, pass dependency_context to the ReAct loop's initial user message)
-
-    loop = ReActLoop(
-        signal=enriched_signal,
-        ctx=ctx,
-        config=config,
-        initial_plans=[plan],
+    customer_id: str,
+    tenant_constraints: list[str],
+    memory_excerpt: str | None,
+) -> SubagentResult:
+    task = next(item for item in plan.tasks if item.id == task_id)
+    dependency_results = {dep_id: result_map[dep_id] for dep_id in task.depends_on if dep_id in result_map}
+    packet = SubagentContextPacket(
+        tenant_id=ctx.tenant_id,
+        customer_id=customer_id,
+        trace_id=ctx.trace_id,
+        task=task,
+        tenant_constraints=tenant_constraints,
+        memory_excerpt=memory_excerpt,
+        dependency_markdown={dep_id: result.markdown for dep_id, result in dependency_results.items()},
+        dependency_data={dep_id: result.data for dep_id, result in dependency_results.items()},
     )
-
-    try:
-        text, tool_results, usage = await loop.run()
-        return TaskResult(
-            task_id=plan.id,
-            success=True,
-            data={"text": text, "tool_results": [r.model_dump() for r in tool_results]},
-            tokens_used=usage.total,
-        )
-    except Exception as exc:
-        return TaskResult(
-            task_id=plan.id,
-            success=False,
-            error=str(exc),
-        )
+    loop = ReActLoop(packet=packet, ctx=ctx, config=config)
+    return await loop.run()
 ```
 
-### 6.5 Reflector
+### 6.5 Compliance Critic as Reflector
 
-The Reflector evaluates whether the execution results satisfy the original intent.
+The `ComplianceCriticAgent` is the Reflector phase. It evaluates aggregated `SubagentResult` objects before any external HTTP service call, database mutation, memory write, or customer-visible emission. It checks security boundaries, PII leakage, tenant policy, brand/business rules, and whether the subagents actually satisfied the original intent.
 
 ```python
-# apps/agent-service/src/agent/reflector.py
+# apps/agent-service/src/agent/subagents/compliance_critic.py
+from __future__ import annotations
+
 import json
-from packages.agent.types import (
-    CustomerSignal, TaskPlan, TaskResult, LLMUsage, SessionContext, AgentConfig,
+from packages.agent.config import AgentConfig
+from packages.agent.orchestration_types import (
+    ComplianceReview,
+    ConversationAgentInput,
+    OrchestratorPlan,
+    SignalAgentInput,
 )
+from packages.agent.subagent_types import SubagentResult
+from packages.agent.types import LLMUsage, SessionContext
 from packages.llm_gateway import chat_completions
 
 
-async def run_reflector(
-    signal: CustomerSignal,
-    plans: list[TaskPlan],
-    results: list[TaskResult],
+async def run_compliance_critic(
+    *,
+    agent_input: SignalAgentInput | ConversationAgentInput,
+    plan: OrchestratorPlan,
+    results: list[SubagentResult],
     ctx: SessionContext,
     config: AgentConfig,
-) -> tuple[bool, str, LLMUsage]:
-    """
-    Evaluate whether execution results fully satisfy the original intent.
-
-    Returns:
-        satisfied: True if results meet the intent
-        feedback: explanation (used for replanning if not satisfied)
-        usage: token usage
-    """
-    result_lines = [
-        f"- {r.task_id}: {'SUCCESS' if r.success else 'FAILED'} | {json.dumps(r.data or r.error)}"
-        for r in results
-    ]
-
+    proposed_external_writes: list[dict],
+) -> tuple[ComplianceReview, LLMUsage]:
+    payload = {
+        "input_kind": "signal" if isinstance(agent_input, SignalAgentInput) else "conversation",
+        "customer_id": agent_input.customer_id,
+        "plan": plan.model_dump(mode="json"),
+        "subagent_results": [result.model_dump(mode="json") for result in results],
+        "proposed_external_writes": proposed_external_writes,
+    }
     messages = [
         {
             "role": "system",
             "content": (
-                "You are a Result Validator. Determine whether the task execution results\n"
-                "fully satisfy the customer's original intent.\n\n"
-                "Respond with a valid JSON object: {\"satisfied\": true/false, \"feedback\": \"...\"}\n"
-                "feedback should be 1-2 sentences explaining why."
+                "You are ComplianceCriticAgent, the Reflector phase of OrchestratorAgent. "
+                "Review the aggregated subagent outputs before any external write, state mutation, "
+                "or customer-visible output. Validate tenant isolation, PII leakage, security, "
+                "business policy adherence, factual support from prior subagent markdown, and tone. "
+                "Return JSON matching ComplianceReview.model_json_schema()."
             ),
         },
-        {
-            "role": "user",
-            "content": (
-                f"Original signal: {signal.signal_text}\n"
-                f"Planned tasks: {', '.join(p.description for p in plans)}\n"
-                f"Execution results:\n" + "\n".join(result_lines) + "\n\n"
-                "Did the execution fully satisfy the intent? If not, what is missing or wrong?"
-            ),
-        },
+        {"role": "user", "content": json.dumps(payload, default=str)},
     ]
 
     response = await chat_completions.create(
-        model=config.planner_model,   # Reflector uses the same model as Planner (fast/cheap)
+        model=config.planner_model,
         messages=messages,
         response_format={"type": "json_object"},
         tenant_id=ctx.tenant_id,
-        trace_name="reflector",
-        trace_metadata={"signal_id": ctx.signal_id},
+        trace_name="compliance_critic_reflector",
+        trace_metadata={"signal_id": ctx.signal_id, "phase": "reflector"},
     )
-
-    content = response.choices[0].message.content
-    parsed = json.loads(content)
-
+    review = ComplianceReview.model_validate_json(response.choices[0].message.content)
     usage = LLMUsage(
         prompt_tokens=response.usage.prompt_tokens,
         completion_tokens=response.usage.completion_tokens,
     )
-
-    return parsed["satisfied"], parsed["feedback"], usage
-
-
-def should_skip_reflector(
-    plans: list[TaskPlan],
-    skip_enabled: bool,
-) -> bool:
-    """
-    Skip Reflector when:
-    - Only 1 task planned AND
-    - The task is a QUERY (read-only) AND
-    - skip_reflector_for_simple is True in config
-
-    This saves 1 LLM call per simple interaction — significant cost savings.
-    """
-    return (
-        len(plans) == 1
-        and plans[0].type == TaskType.QUERY
-        and skip_enabled
-    )
+    return review, usage
 ```
 
 ### 6.6 Orchestrate (Top-Level)
 
 ```python
-# apps/agent-service/src/workflow/orchestrate.py
+# apps/agent-service/src/agent/signal/signal_orchestrator.py
+from __future__ import annotations
+
 import json
-import asyncio
-from packages.agent.types import (
-    CustomerSignal, SessionContext, AgentConfig, AgentResponse,
-    TaskType, TaskResult,
-)
-from packages.agent.planner import run_planner
-from packages.agent.executor import execute_tasks
-from packages.agent.reflector import run_reflector, should_skip_reflector
-from packages.agent.workflow.langgraph import run_langgraph_workflow
-from packages.llm_gateway import chat_completions
+from packages.agent.config import AgentConfig
+from packages.agent.orchestration_types import ComplianceReview, FinalDecision, SignalAgentInput
+from packages.agent.types import AgentResponse, SessionContext
+from apps.agent_service.src.agent.runtime.delegation import execute_tasks
+from apps.agent_service.src.agent.signal.signal_planner import build_signal_plan
+from apps.agent_service.src.agent.subagents.compliance_critic import run_compliance_critic
+from apps.agent_service.src.agent.orchestrator.reducer import _extract_proposed_external_writes, _finalize_decision
 
 
-async def orchestrate(
-    signal: CustomerSignal,
-    ctx: SessionContext,
-) -> AgentResponse:
-    """
-    Top-level P-E-R orchestration.
-
-    Flow:
-        1. Load tenant config
-        2. Planner → list[TaskPlan]
-        3. Decide: Python Agent or LangGraph?
-        4. Executor → list[TaskResult]
-        5. Reflector (maybe skipped)
-        6. Return AgentResponse
-    """
-    # 1. Load tenant config
+async def run_signal_agent(signal_input: SignalAgentInput, ctx: SessionContext) -> AgentResponse:
     config = await load_tenant_config(ctx.tenant_id)
+    tenant_constraints = await load_tenant_constraints(ctx.tenant_id)
+    memory_excerpt = await load_account_memory_excerpt(signal_input.customer_id, ctx, config)
 
-    # 2. Planner
-    plans, planner_usage = await run_planner(signal, ctx, config.tools, config)
-    total_planner_tokens = planner_usage.total
-
-    # 3. Decide: LangGraph or Python Agent?
-    use_langgraph = (
-        any(p.type == TaskType.MUTATION for p in plans)   # write ops need checkpoint
-        or len(plans) > 3                                  # complex multi-step
-        or signal.payload.get("requires_human_approval")   # explicit interrupt needed
+    plan, planner_usage = await build_signal_plan(
+        signal_input=signal_input,
+        ctx=ctx,
+        config=config,
+        tenant_constraints=tenant_constraints,
+        memory_excerpt=memory_excerpt,
     )
 
-    if use_langgraph:
-        # LangGraph workflow handles its own execution + checkpoint
-        result = await run_langgraph_workflow(plans, signal, ctx)
-        return AgentResponse(
-            text=result.summary,
-            tasks=result.task_results,
-            planner_tokens=total_planner_tokens,
-            reflector_tokens=0,
-            skipped_reflector=True,
-        )
-
-    # 4. Python Agent path: Executor
-    results = await execute_tasks(plans, ctx, config, signal)
-    total_reflector_tokens = 0
-
-    # 5. Reflector (maybe skipped)
-    if should_skip_reflector(plans, config.skip_reflector_for_simple):
-        final_text = _summarize_results(results)
-        return AgentResponse(
-            text=final_text,
-            tasks=results,
-            planner_tokens=total_planner_tokens,
-            reflector_tokens=0,
-            skipped_reflector=True,
-        )
-
-    # Run Reflector
-    satisfied, feedback, reflector_usage = await run_reflector(
-        signal, plans, results, ctx, config
+    results = await execute_tasks(
+        plan=plan,
+        ctx=ctx,
+        config=config,
+        customer_id=signal_input.customer_id,
+        tenant_constraints=tenant_constraints,
+        memory_excerpt=memory_excerpt,
     )
-    total_reflector_tokens = reflector_usage.total
 
-    # 6. Replan if not satisfied (up to max_replan_attempts)
-    replan_count = 0
-    current_plans = plans
-    current_results = results
+    proposed_external_writes = _extract_proposed_external_writes(results)
+    review, critic_usage = await run_compliance_critic(
+        agent_input=signal_input,
+        plan=plan,
+        results=results,
+        ctx=ctx,
+        config=config,
+        proposed_external_writes=proposed_external_writes,
+    )
 
-    while not satisfied and replan_count < config.max_replan_attempts:
-        replan_count += 1
-
-        # Call Planner again with Reflector feedback
-        current_plans, replan_usage = await run_planner(
-            signal, ctx, config.tools, config,
-            # Pass feedback as extra context
-        )
-        total_planner_tokens += replan_usage.total
-
-        # Re-execute with new plan
-        current_results = await execute_tasks(current_plans, ctx, config, signal)
-
-        # Re-evaluate
-        satisfied, feedback, _ = await run_reflector(
-            signal, current_plans, current_results, ctx, config
-        )
-
-    if not satisfied:
-        # Escalate to human
-        feedback = f"[Max replan attempts reached] {feedback}"
-
-    final_text = _summarize_results(current_results)
+    decision = _finalize_decision(results, review, proposed_external_writes)
+    if review.approved:
+        await emit_approved_outputs(decision, ctx)
+        await write_signal_memory(signal_input, decision, ctx)
+    await write_orchestrator_audit(ctx, plan, results, review, decision)
 
     return AgentResponse(
-        text=final_text,
-        tasks=current_results,
-        planner_tokens=total_planner_tokens,
-        reflector_tokens=total_reflector_tokens,
-        skipped_reflector=False,
-        satisfied=satisfied,
-        feedback=feedback,
+        text=decision.response_text,
+        subagent_results=results,
+        planner_tokens=planner_usage.total,
+        executor_tokens=sum(result.tokens_used for result in results),
+        critic_tokens=critic_usage.total,
+        approved=review.approved,
+        final_decision=decision,
+        feedback=review.feedback,
+    )
+```
+
+```python
+# apps/agent-service/src/agent/conversation/conversation_orchestrator.py
+from __future__ import annotations
+
+from packages.agent.config import AgentConfig
+from packages.agent.orchestration_types import ConversationAgentInput
+from packages.agent.types import AgentResponse, SessionContext
+from apps.agent_service.src.agent.conversation.conversation_planner import build_conversation_plan
+from apps.agent_service.src.agent.runtime.delegation import execute_tasks
+from apps.agent_service.src.agent.subagents.compliance_critic import run_compliance_critic
+from apps.agent_service.src.agent.orchestrator.reducer import _finalize_decision
+
+
+async def run_conversation_agent(
+    conversation_input: ConversationAgentInput,
+    ctx: SessionContext,
+) -> AgentResponse:
+    config = await load_tenant_config(ctx.tenant_id)
+    tenant_constraints = await load_tenant_constraints(ctx.tenant_id)
+    conversation_memory = await load_conversation_memory(conversation_input, ctx, config)
+
+    plan, planner_usage = await build_conversation_plan(
+        conversation_input=conversation_input,
+        ctx=ctx,
+        config=config,
+        tenant_constraints=tenant_constraints,
+        conversation_memory=conversation_memory,
+    )
+
+    results = await execute_tasks(
+        plan=plan,
+        ctx=ctx,
+        config=config,
+        customer_id=conversation_input.customer_id,
+        tenant_constraints=tenant_constraints,
+        memory_excerpt=conversation_memory,
+    )
+
+    review, critic_usage = await run_compliance_critic(
+        agent_input=conversation_input,
+        plan=plan,
+        results=results,
+        ctx=ctx,
+        config=config,
+        proposed_external_writes=[],
+    )
+
+    decision = _finalize_decision(results, review, proposed_external_writes=[])
+    if review.approved:
+        await write_conversation_memory(conversation_input, decision, ctx)
+    await write_orchestrator_audit(ctx, plan, results, review, decision)
+
+    return AgentResponse(
+        text=decision.response_text,
+        subagent_results=results,
+        planner_tokens=planner_usage.total,
+        executor_tokens=sum(result.tokens_used for result in results),
+        critic_tokens=critic_usage.total,
+        approved=review.approved,
+        final_decision=decision,
+        feedback=review.feedback,
+    )
+```
+
+```python
+# apps/agent-service/src/agent/orchestrator/reducer.py
+from __future__ import annotations
+
+import json
+from packages.agent.orchestration_types import ComplianceReview, FinalDecision
+from packages.agent.subagent_types import SubagentResult
+
+
+def _extract_proposed_external_writes(results: list[SubagentResult]) -> list[dict]:
+    writes: list[dict] = []
+    for result in results:
+        writes.extend(result.data.get("proposed_external_writes", []))
+    return writes
+
+
+def _finalize_decision(
+    results: list[SubagentResult],
+    review: ComplianceReview,
+    proposed_external_writes: list[dict],
+) -> FinalDecision:
+    if not review.approved:
+        return FinalDecision(
+            action="blocked_or_escalated",
+            response_text=review.feedback,
+            approved_external_writes=[],
+            subagent_results=results,
+            compliance_review=review,
+            reasoning_summary="ComplianceCriticAgent blocked output or mutation.",
+        )
+
+    markdown_sections = [result.markdown for result in results if result.success and result.markdown]
+    return FinalDecision(
+        action="emit_or_execute_approved_payload",
+        response_text="\n\n".join(markdown_sections) if markdown_sections else review.feedback,
+        approved_external_writes=_apply_redactions(proposed_external_writes, review),
+        subagent_results=results,
+        compliance_review=review,
+        reasoning_summary="Planner, delegated subagents, and reflector completed successfully.",
     )
 
 
-def _summarize_results(results: list[TaskResult]) -> str:
-    """Concatenate all successful task results into a summary."""
-    summaries = []
-    for r in results:
-        if r.success and r.data:
-            summaries.append(json.dumps(r.data))
-        elif not r.success:
-            summaries.append(f"[{r.task_id} failed: {r.error}]")
-    return "\n".join(summaries) if summaries else "Task completed with no output."
-
-
-# Helper: load tenant config (cached in Redis)
-_tenant_config_cache: dict[str, tuple[AgentConfig, float]] = {}
-_CACHE_TTL_SECONDS = 300
-
-
-async def load_tenant_config(tenant_id: str) -> AgentConfig:
-    """Load tenant config from DB, cached in memory with 5-min TTL."""
-    import time
-    now = time.time()
-
-    if tenant_id in _tenant_config_cache:
-        config, cached_at = _tenant_config_cache[tenant_id]
-        if now - cached_at < _CACHE_TTL_SECONDS:
-            return config
-
-    # TODO: load from DB (packages/db/)
-    # config = await db.tenants.find_one({"tenant_id": tenant_id})
-    config = AgentConfig(
-        tenant_id=tenant_id,
-        name="default",
-        instructions="You are a Customer Success AI agent.",
-        model="claude-sonnet-4-7-2025-06-09",
-        planner_model="claude-haiku-4-20250514",
-        tools=["query_health", "send_email", "send_slack"],
-    )
-
-    _tenant_config_cache[tenant_id] = (config, now)
-    return config
+def _apply_redactions(writes: list[dict], review: ComplianceReview) -> list[dict]:
+    serialized = json.dumps(writes, default=str)
+    for raw, redacted in review.redactions.items():
+        serialized = serialized.replace(raw, redacted)
+    return json.loads(serialized)
 ```
 
 ---
@@ -1381,7 +1584,7 @@ Track in Langfuse. Disable semantic recall if cost/quality tradeoff is poor.
 ## 8. Customer Chat (Target Phase)
 
 Beyond the proactive, signal-triggered outreach that drives the rest of this plan, the agent
-also supports a **synchronous, customer-facing chat** channel. Where the P-E-R loop is
+also supports a **synchronous, customer-facing chat** channel. Where signal-driven orchestration is
 triggered by a `CustomerSignal` (a detected event), chat is triggered by a **customer message**
 and runs as a multi-turn conversation with streamed responses.
 
@@ -1396,10 +1599,7 @@ and runs as a multi-turn conversation with streamed responses.
 | Memory | Optional context | **Required** — every turn reads/writes memory (§7) |
 | Latency target | Seconds to minutes | Sub-second first token (streaming) |
 
-Chat reuses the same core primitives — the Orchestrator (§6), the ReAct loop (§6.2), the tool registry (§5), and
-conversation memory (§7). It does **not** re-run the full signal-outreach plan on every turn; for a
-typical chat turn the Orchestrator delegates to `CustomerChatAgent`, optionally calls specialists,
-runs `ComplianceCriticAgent`, then streams or returns the approved response.
+Chat reuses the same shared runtime primitives — `ConversationOrchestrator` (§6), the ReAct loop (§6.2), the tool registry (§5), and conversation memory (§7). It does **not** run signal-outreach automation on every turn. For a typical chat turn, `ConversationOrchestrator` plans a `CustomerChatAgent` task, optionally adds specialist subagents such as `HealthAnalysisAgent` or `PlaybookRetrievalAgent`, runs `ComplianceCriticAgent`, then streams or returns the approved response.
 
 ### 8.2 Chat Data Types
 
@@ -1434,28 +1634,17 @@ class ChatResponse(BaseModel):
     tokens_used: int = 0
 ```
 
-### 8.3 Chat Handler (ReAct + Memory)
+### 8.3 Chat Handler (ConversationOrchestrator + Memory)
 
 ```python
-# apps/agent-service/src/agent/chat.py
-from typing import AsyncGenerator
+# apps/agent-service/src/agent/conversation/chat_handler.py
 from packages.agent.chat_types import ChatRequest, ChatResponse, ChatMessage
-from packages.agent.memory import TenantMemory
-from packages.agent.types import SessionContext, AgentConfig
-from apps.agent_service.src.agent.react_loop import ReActLoop
+from packages.agent.orchestration_types import ConversationAgentInput
+from packages.agent.types import SessionContext
+from apps.agent_service.src.agent.conversation.conversation_orchestrator import run_conversation_agent
 
 
-async def handle_chat_turn(req: ChatRequest, config: AgentConfig) -> ChatResponse:
-    """
-    Handle one customer chat turn.
-
-    Flow:
-        1. Load conversation history from memory (§7)
-        2. Append the new user message
-        3. Run the ReAct loop with history + tools
-        4. Persist both user + assistant messages back to memory
-        5. Return the reply
-    """
+async def handle_chat_turn(req: ChatRequest) -> ChatResponse:
     ctx = SessionContext(
         tenant_id=req.tenant_id,
         user_id=req.customer_id,
@@ -1463,30 +1652,24 @@ async def handle_chat_turn(req: ChatRequest, config: AgentConfig) -> ChatRespons
         signal_id=f"chat:{req.session_id}",
     )
 
-    memory = TenantMemory(req.tenant_id, req.customer_id, req.session_id)
+    conversation_input = ConversationAgentInput(
+        tenant_id=req.tenant_id,
+        customer_id=req.customer_id,
+        session_id=req.session_id,
+        message=ChatMessage(role="user", content=req.message),
+        stream=req.stream,
+    )
 
-    # 1-2. Load history and append the new message
-    history = await memory.get_messages()
-    await memory.add_message(role="user", content=req.message)
-
-    # 3. Run ReAct loop seeded with history + the new message
-    loop = ReActLoop.from_chat(history=history, user_message=req.message, ctx=ctx, config=config)
-    reply, tool_results, usage = await loop.run()
-
-    # 4. Persist the assistant reply
-    await memory.add_message(role="assistant", content=reply)
-
-    # 5. Return
+    response = await run_conversation_agent(conversation_input, ctx)
     return ChatResponse(
         session_id=req.session_id,
-        reply=reply,
-        tool_calls=[r.task_id for r in tool_results],
-        tokens_used=usage.total,
+        reply=response.text,
+        tool_calls=[call.tool_name for result in response.subagent_results for call in result.tool_calls],
+        tokens_used=response.planner_tokens + response.executor_tokens + response.critic_tokens,
     )
 ```
 
-> **Note:** `ReActLoop.from_chat(...)` is a thin constructor that seeds `self.messages` with the
-> stored history instead of a single signal-derived prompt. The loop body (§6.2) is unchanged.
+> **Note:** streaming should be implemented in `agent/conversation/streaming.py`. The streaming path may emit provisional assistant tokens from `CustomerChatAgent`, but the final response must still pass `ComplianceCriticAgent` before completion is committed to memory or external channels.
 
 ### 8.4 HTTP Endpoint (api-gateway)
 
@@ -1709,16 +1892,17 @@ def build_qbr_graph(checkpointer: PostgresSaver) -> StateGraph:
 
 ## 10. Integration Points
 
-### 10.1 RQ Worker (`rq_worker.py`)
+### 10.1 Signal RQ Worker (`rq_worker.py`)
 
 ```python
 # apps/agent-service/src/rq_worker.py
 # BEFORE: inline decision logic
-# AFTER: call orchestrate()
+# AFTER: normalize queued payload into SignalAgentInput and call SignalOrchestrator
 
-async def process_job(job):
+async def process_signal_job(job):
+    from packages.agent.orchestration_types import SignalAgentInput
     from packages.agent.types import CustomerSignal, SessionContext
-    from packages.agent.workflow.orchestrate import orchestrate
+    from apps.agent_service.src.agent.signal.signal_orchestrator import run_signal_agent
 
     signal = CustomerSignal(**job.payload)
     ctx = SessionContext(
@@ -1729,23 +1913,31 @@ async def process_job(job):
         trace_id=job.metadata.get("trace_id"),
     )
 
-    response = await orchestrate(signal, ctx)
+    response = await run_signal_agent(
+        SignalAgentInput(
+            tenant_id=signal.tenant_id,
+            customer_id=signal.customer_id,
+            signal=signal,
+            requested_by_user_id=job.metadata.get("user_id"),
+        ),
+        ctx,
+    )
 
-    # Log results to DB
     await log_agent_run(
         signal_id=signal.id,
         tenant_id=signal.tenant_id,
         text=response.text,
-        tasks=response.tasks,
+        subagent_results=[result.model_dump(mode="json") for result in response.subagent_results],
         planner_tokens=response.planner_tokens,
-        reflector_tokens=response.reflector_tokens,
-        skipped_reflector=response.skipped_reflector,
+        executor_tokens=response.executor_tokens,
+        critic_tokens=response.critic_tokens,
+        approved=response.approved,
     )
 ```
 
 ### 10.2 Skill Gateway Protocol
 
-The skill-gateway exposes a single HTTP API. Both Python Agent tool dispatch and LangGraph
+The skill-gateway exposes a single HTTP API. Both Orchestrator/Subagent tool dispatch and LangGraph
 activities call this endpoint.
 
 **Request:**
@@ -1845,22 +2037,23 @@ langfuse.trace(
 with langfuse.span(name="planner", input=user_message, output=plans_dict):
     ...
 
-# Span: each task result
-for task_result in results:
+# Span: each subagent result
+for subagent_result in results:
     with langfuse.span(
-        name=f"task.{task_result.task_id}",
-        input=task_result.description,
-        output=task_result.data,
+        name=f"subagent.{subagent_result.role.value}.{subagent_result.task_id}",
+        input=subagent_result.task_id,
+        output=subagent_result.model_dump(mode="json"),
     ):
         ...
 
 # Span: Reflector
-with langfuse.span(name="reflector", input=plans, output={"satisfied": satisfied, "feedback": feedback}):
+with langfuse.span(name="compliance_critic", input=plan.model_dump(), output=review.model_dump()):
     ...
 
 # Metadata: token totals
 trace.metadata["planner_tokens"] = response.planner_tokens
-trace.metadata["reflector_tokens"] = response.reflector_tokens
+trace.metadata["executor_tokens"] = response.executor_tokens
+trace.metadata["critic_tokens"] = response.critic_tokens
 ```
 
 ---
@@ -1871,41 +2064,66 @@ trace.metadata["reflector_tokens"] = response.reflector_tokens
 
 > **Interim approach (gateways deferred):** Phase 1 calls the LLM provider directly through a
 > thin `openai` SDK wrapper (`llm_client.py`) and executes all tools **in-process**. The dedicated
-> **LLM Gateway** (multi-provider routing, caching, circuit breaking, billing) and **Skill Gateway**
-> (sandboxed external skill execution) are moved to "Future Plan — Gateways" below. Phase 1 code
-> imports the local `llm_client` shim; when the LLM Gateway lands, the import is swapped for
-> `packages.llm_gateway` with no change to the orchestrator/subagent call sites.
+> **LLM Gateway** and **Skill Gateway** are moved to "Future Plan — Gateways" below. Phase 1 still
+> preserves the final architecture by separating `SignalOrchestrator` and `ConversationOrchestrator`
+> while sharing `DelegationManager`, `ReActLoop`, subagents, and `ComplianceCriticAgent`.
+
 Phase 1 deliverables (Core Agent):
 
-- [ ] `packages/agent/src/types.py` — Pydantic models: `TaskPlan`, `TaskResult`, `CustomerSignal`, `SessionContext`, `AgentResponse`, `LLMUsage`
-- [ ] `packages/agent/src/config.py` — `AgentConfig` per tenant
-- [ ] `packages/skill-system/src/registry.py` — `TOOL_REGISTRY`, `get_tool_definition()`, `get_tools_for_tenant()`
-- [ ] Core tools: `query_health`, `send_email`, `send_slack` with proper Pydantic schemas (executed **in-process** in Phase 1)
+#### Shared foundations
+
+- [x] `packages/agent/src/types.py` — Pydantic models: `CustomerSignal`, `SessionContext`, `AgentResponse`, `LLMUsage`
+- [x] `packages/agent/src/config.py` — `AgentConfig` per tenant
+- [ ] `packages/agent/src/orchestration_types.py` — `SignalAgentInput`, `ConversationAgentInput`, `AgentDispatchInput`, `OrchestratorPlan`, `ComplianceReview`, `FinalDecision`
+- [ ] `packages/agent/src/subagent_types.py` — `AgentRole`, `SubagentTask`, `SubagentContextPacket`, `SubagentResult`, `ToolCallRecord`
+- [ ] `packages/agent/src/chat_types.py` — `ChatMessage`, `ChatRequest`, `ChatResponse` Pydantic models
 - [ ] `apps/agent-service/src/agent/llm_client.py` — thin `openai` SDK wrapper (direct provider call + Langfuse tracing), interim stand-in for the LLM Gateway
-- [ ] `packages/agent/src/orchestration_types.py` — `AgentInput`, `OrchestratorPlan`, `FinalDecision`
-- [ ] `packages/agent/src/subagent_types.py` — `AgentRole`, `SubagentTask`, `SubagentResult`
-- [ ] `apps/agent-service/src/agent/orchestrator/orchestrator.py` — `OrchestratorAgent` owns context, memory, policy, and final response
-- [ ] `apps/agent-service/src/agent/orchestrator/planner.py` — delegation planner creates `SubagentTask` objects
+- [x] `packages/skill-system/src/registry.py` — `TOOL_REGISTRY`, `get_tool_definition()`, `get_tools_for_tenant()`
+- [ ] Core tools: `query_health`, `query_playbooks`, `send_email`, `send_slack` with proper Pydantic schemas (executed **in-process** in Phase 1)
+
+#### Shared runtime
+
+- [ ] `apps/agent-service/src/agent/orchestrator/base.py` — shared P-E-R base/protocols used by both top-level systems
+- [ ] `apps/agent-service/src/agent/orchestrator/planning_prompts.py` — shared role skill prompt registry and planner helpers
 - [ ] `apps/agent-service/src/agent/orchestrator/reducer.py` — merges `SubagentResult` objects into `FinalDecision`
+- [ ] `apps/agent-service/src/agent/orchestrator/policy.py` — tenant policy, approval, and output guardrail helpers
+- [ ] `apps/agent-service/src/agent/runtime/react_loop.py` — shared ReAct loop for tool-using subagents
+- [ ] `apps/agent-service/src/agent/runtime/delegation.py` — subagent manager with dependency-aware execution and markdown dependency injection
+- [ ] `apps/agent-service/src/agent/runtime/context.py` — context packing for signal/account memory and conversation memory slices
+- [ ] `apps/agent-service/src/agent/runtime/tool_caller.py` — tool dispatcher (**in-process only** in Phase 1; skill-gateway routing deferred)
+
+#### Shared subagents
+
 - [ ] `apps/agent-service/src/agent/subagents/health_analysis.py` — health/risk specialist
 - [ ] `apps/agent-service/src/agent/subagents/playbook_retrieval.py` — playbook/RAG specialist
 - [ ] `apps/agent-service/src/agent/subagents/outreach_draft.py` — customer-facing draft specialist
 - [ ] `apps/agent-service/src/agent/subagents/customer_chat.py` — customer chat specialist
-- [ ] `apps/agent-service/src/agent/subagents/compliance_critic.py` — safety/policy critic
-- [ ] `apps/agent-service/src/agent/runtime/react_loop.py` — shared ReAct loop for tool-using subagents
-- [ ] `apps/agent-service/src/agent/runtime/tool_caller.py` — tool dispatcher (**in-process only** in Phase 1; skill-gateway routing deferred)
-- [ ] `apps/agent-service/src/agent/orchestrator/planner.py` — delegation planner with skip-critic logic
-- [ ] `apps/agent-service/src/agent/runtime/delegation.py` — subagent dispatcher with dependency-aware execution
-- [ ] `apps/agent-service/src/agent/subagents/compliance_critic.py` — critic with skip logic
-- [ ] `apps/agent-service/src/workflow/orchestrate.py` — top-level entry point accepting `AgentInput` (`CustomerSignal` or `ChatMessage`)
-- [ ] `apps/agent-service/src/rq_worker.py` — call `orchestrate()` instead of inline logic
-- [ ] Langfuse tracing for Orchestrator and all subagent calls
-- [ ] Unit tests: Orchestrator delegation plan, subagent result merge, critic approval logic
-- [ ] Unit tests: chat turn reads/writes memory; multi-turn context is preserved
+- [ ] `apps/agent-service/src/agent/subagents/compliance_critic.py` — Reflector phase safety/policy critic
+
+#### Signal system
+
+- [ ] `apps/agent-service/src/agent/signal/signal_orchestrator.py` — `SignalOrchestrator` for proactive `CustomerSignal` workflows
+- [ ] `apps/agent-service/src/agent/signal/signal_planner.py` — signal-specific planner producing `OrchestratorPlan`
+- [ ] `apps/agent-service/src/agent/signal/signal_reducer.py` — signal-specific proactive action candidates and escalation decisions
+- [ ] `apps/agent-service/src/signals/normalizer.py` — converts webhook/scheduled/internal events into `CustomerSignal`
+- [ ] `apps/agent-service/src/signals/queue.py` — persists and enqueues signals for RQ processing
+- [ ] `apps/agent-service/src/rq_worker.py` — call `run_signal_agent()` instead of inline logic
+
+#### Conversation system
+
 - [ ] `packages/agent/src/memory.py` — conversation memory with Postgres (+ optional pgvector semantic recall)
-- [ ] `packages/agent/src/chat_types.py` — `ChatMessage`, `ChatRequest`, `ChatResponse` Pydantic models
-- [ ] `apps/agent-service/src/agent/chat.py` — `handle_chat_turn()` (ReAct + memory) and streaming variant
+- [ ] `apps/agent-service/src/agent/conversation/conversation_orchestrator.py` — `ConversationOrchestrator` for chat/message turns
+- [ ] `apps/agent-service/src/agent/conversation/conversation_planner.py` — conversation-specific planner that starts with `CustomerChatAgent` and adds specialists only when needed
+- [ ] `apps/agent-service/src/agent/conversation/chat_handler.py` — `handle_chat_turn()` wrapper over `run_conversation_agent()`
+- [ ] `apps/agent-service/src/agent/conversation/streaming.py` — streaming-safe response path with final critic approval semantics
 - [ ] `apps/api-gateway/src/routes/chat.py` — authenticated, tenant-scoped streaming chat endpoint
+
+#### Observability and tests
+
+- [ ] Langfuse tracing for both top-level orchestrators and all subagent calls
+- [ ] Unit tests: signal planner, signal orchestration, subagent result merge, critic approval logic
+- [ ] Unit tests: conversation planner, chat turn reads/writes memory, multi-turn context preservation
+- [ ] Integration tests: signal → `SignalOrchestrator` → approved draft/action; chat → `ConversationOrchestrator` → approved response
 
 ### Future Plan — Gateways (LLM Gateway + Skill Gateway)
 
@@ -1913,7 +2131,7 @@ These two gateways are **not built in Phase 1**. Phase 1 runs on the `llm_client
 in-process tool execution. This phase introduces the dedicated gateways and migrates the agent
 onto them.
 
-- [ ] `packages/llm-gateway/src/__init__.py` — `AgentChatCompletions` class with billing + tracing; replaces the Phase 1 `llm_client` shim (same call signature, so orchestrator/subagent code is unchanged)
+- [ ] `packages/llm-gateway/src/__init__.py` — `AgentChatCompletions` class with billing + tracing; replaces the Phase 1 `llm_client` shim (same call signature, so Orchestrator/Subagent code is unchanged)
 - [ ] `packages/llm-gateway/src/router.py` — `model_for_agent_task()` per-request model routing
 - [ ] `packages/llm-gateway/src/cache.py` — prompt/semantic caching (Redis + pgvector)
 - [ ] `packages/llm-gateway/src/circuit.py` — circuit breaker (state in Redis)
@@ -1925,11 +2143,14 @@ onto them.
 ### Phase 2 — Advanced Capabilities (Future Plan)
 
 - [ ] `packages/agent/src/memory.py` — conversation memory enhancements: pgvector semantic recall + retention policy (base memory ships in Target Phase §7)
+- [ ] Signal detectors: usage-drop detector, renewal-risk detector, NPS-change detector, support-ticket risk detector
+- [ ] Conversation-to-signal bridge: emit `CustomerSignal(type="churn_risk_from_chat")` or `CustomerSignal(type="expansion_opportunity_from_chat")` when chat reveals follow-up work
 - [ ] Advanced tools: `query_knowledge_base`, `generate_qbr`, `schedule_meeting`, `escalate_to_csm`
 - [ ] LangGraph Python `refund.py` — refund approval with interrupt + PostgresSaver checkpointer
-- [ ] LangGraph Python `qbr.py` — QBR generation with checkpoint
+- [ ] LangGraph Python `qbr.py` — QBR generation with checkpoint, initiated primarily from `SignalOrchestrator`
 - [ ] Multi-tenant agent config loading from DB (replace hardcoded `load_tenant_config`)
 - [ ] Integration tests: full refund approval cycle with mock interrupt resume
+- [ ] Integration tests: conversation asks account-health question and delegates to `HealthAnalysisAgent` without invoking proactive signal actions
 
 ### Phase 3 — Production Hardening (Future Plan)
 
@@ -1948,14 +2169,15 @@ onto them.
 ### Unit Tests (pytest + pytest-asyncio)
 
 ```python
-# tests/test_planner.py
+# tests/test_signal_planner.py
 import pytest
-from packages.agent.types import CustomerSignal, TaskType
-from apps.agent_service.src.agent.planner import run_planner
+from packages.agent.orchestration_types import SignalAgentInput
+from packages.agent.types import CustomerSignal, SessionContext
+from apps.agent_service.src.agent.signal.signal_planner import build_signal_plan
 
 
 @pytest.mark.asyncio
-async def test_planner_decomposes_usage_drop():
+async def test_signal_planner_delegates_usage_drop_to_specialists(config):
     signal = CustomerSignal(
         tenant_id="t1",
         customer_id="c1",
@@ -1963,89 +2185,83 @@ async def test_planner_decomposes_usage_drop():
         payload={"pct": 40, "health_score": 35},
     )
     ctx = SessionContext(tenant_id="t1", user_id="u1", session_id="s1", signal_id=signal.id)
-    config = AgentConfig(tenant_id="t1", name="test", instructions="", model="claude-haiku", planner_model="claude-haiku", tools=["query_health", "send_email"])
 
-    plans, usage = await run_planner(signal, ctx, config.tools, config)
-
-    assert len(plans) == 2
-    assert plans[0].skill == "query_health"
-    assert plans[1].skill == "send_email"
-    assert plans[1].depends_on == [plans[0].id]
-
-
-@pytest.mark.asyncio
-async def test_planner_single_query_plan():
-    signal = CustomerSignal(
-        tenant_id="t1", customer_id="c1", type="health_check", payload={}
+    plan, _ = await build_signal_plan(
+        SignalAgentInput(tenant_id="t1", customer_id="c1", signal=signal),
+        ctx,
+        config,
+        tenant_constraints=[],
+        memory_excerpt=None,
     )
-    ctx = SessionContext(tenant_id="t1", user_id="u1", session_id="s1", signal_id=signal.id)
-    config = AgentConfig(tenant_id="t1", name="test", instructions="", model="claude-haiku", planner_model="claude-haiku", tools=["query_health"])
 
-    plans, _ = await run_planner(signal, ctx, config.tools, config)
-
-    assert len(plans) == 1
-    assert plans[0].type == TaskType.QUERY
+    assert plan.requires_critic is True
+    assert {task.role.value for task in plan.tasks} >= {"health_analysis"}
 
 
-# tests/test_executor.py
+# tests/test_conversation_planner.py
 @pytest.mark.asyncio
-async def test_executor_parallelizes_independent_tasks():
-    plans = [
-        TaskPlan(id="a", description="...", type=TaskType.QUERY),
-        TaskPlan(id="b", description="...", type=TaskType.QUERY),
-    ]
-    results = await execute_tasks(plans, ctx, config, signal)
-    assert len(results) == 2
-    assert all(r.success for r in results)
+async def test_conversation_planner_starts_with_customer_chat_agent(config):
+    conversation_input = ConversationAgentInput(
+        tenant_id="t1",
+        customer_id="c1",
+        session_id="chat1",
+        message=ChatMessage(role="user", content="Why did our usage drop?"),
+    )
+    ctx = SessionContext(tenant_id="t1", user_id="c1", session_id="chat1", signal_id="chat:chat1")
+
+    plan, _ = await build_conversation_plan(
+        conversation_input,
+        ctx,
+        config,
+        tenant_constraints=[],
+        conversation_memory="",
+    )
+
+    assert plan.requires_critic is True
+    assert any(task.role.value == "customer_chat" for task in plan.tasks)
 
 
+# tests/test_delegation.py
 @pytest.mark.asyncio
-async def test_executor_respects_dependencies():
-    plans = [
-        TaskPlan(id="a", description="...", type=TaskType.QUERY),
-        TaskPlan(id="b", depends_on=["a"], description="...", type=TaskType.QUERY),
-    ]
-    results = await execute_tasks(plans, ctx, config, signal)
-    # "a" executes first; "b" gets "a"'s result injected into its prompt
-    assert len(results) == 2
+async def test_delegation_injects_dependency_markdown(ctx, config, plan_with_dependencies):
+    results = await execute_tasks(
+        plan=plan_with_dependencies,
+        ctx=ctx,
+        config=config,
+        customer_id="c1",
+        tenant_constraints=[],
+        memory_excerpt=None,
+    )
+    assert len(results) == len(plan_with_dependencies.tasks)
 
 
-# tests/test_reflector.py
-def test_should_skip_reflector_simple_query():
-    plans = [TaskPlan(id="a", type=TaskType.QUERY)]
-    assert should_skip_reflector(plans, skip_enabled=True) is True
-
-
-def test_should_not_skip_reflector_mutation():
-    plans = [TaskPlan(id="a", type=TaskType.MUTATION)]
-    assert should_skip_reflector(plans, skip_enabled=True) is False
-
-
-def test_should_not_skip_reflector_multi_task():
-    plans = [
-        TaskPlan(id="a", type=TaskType.QUERY),
-        TaskPlan(id="b", type=TaskType.QUERY),
-    ]
-    assert should_skip_reflector(plans, skip_enabled=True) is False
+# tests/test_critic.py
+def test_compliance_review_blocks_external_writes_with_pii(review_with_pii):
+    assert review_with_pii.approved is False
+    assert review_with_pii.pii_detected is True
 ```
 
 ### Integration Tests
 
-- End-to-end with mock skill-gateway: signal → orchestrate() → email sent
+- End-to-end signal path: webhook/scheduled event → `CustomerSignal` → `run_signal_agent()` → approved draft/action packet
+- End-to-end conversation path: chat request → `run_conversation_agent()` → approved customer response + memory write
+- Conversation specialist delegation: customer asks account-health question → `CustomerChatAgent` + `HealthAnalysisAgent` → critic-approved answer
+- Conversation-to-signal bridge: chat reveals churn risk → conversation response remains bounded, follow-up signal is queued separately
 - LangGraph workflow: full refund approval cycle with mock interrupt resume
 - Multi-tenant isolation: verify tenant A's data never reaches tenant B's agent
 
 ### Load Tests
 
-- Simulate 100 concurrent `orchestrate()` calls
-- Measure: Planner p95 latency, Executor p95 latency, total end-to-end time
-- Target: < 5s end-to-end for simple 1-tool tasks, < 30s for multi-tool
+- Simulate 100 concurrent `run_signal_agent()` calls
+- Simulate 100 concurrent `run_conversation_agent()` calls with streaming disabled and enabled
+- Measure: planner p95 latency, subagent p95 latency, critic p95 latency, total end-to-end time
+- Target: < 5s end-to-end for simple 1-subagent read-only chat turns, < 30s for multi-subagent signal workflows
 
 ---
 
 ## 13. Open Questions
 
-1. **LLM model per orchestrator/subagent role**: Should Orchestrator, critic, and specialist subagents use the same model, or cheaper/faster models per role
+1. **LLM model per Orchestrator/Subagent role**: Should Orchestrator, critic, and specialist subagents use the same model, or cheaper/faster models per role
    (for example Haiku for classification/critic and Sonnet for complex execution)? Keep per-role model config as the default.
 
 2. **Skill-gateway protocol**: HTTP POST is simple but adds ~50-200ms latency per tool call.
@@ -2070,53 +2286,58 @@ def test_should_not_skip_reflector_multi_task():
 
 ---
 
-## 14. Reflection: Changes from Original Plan
+## 14. Reflection: Plan Review and Remaining Risks
 
-The original plan referenced TypeScript/Mastra throughout. This Python rewrite makes the following
-substantive changes:
+This revision changes the architecture from one generic top-level orchestrator into **two top-level agent systems on a shared runtime**:
 
-### Framework changes
+- `SignalOrchestrator` for proactive automation from `CustomerSignal`
+- `ConversationOrchestrator` for customer chat/message turns from `ChatMessage`
 
-- **Removed**: `apps/agent-service/src/agent/mastra/` directory and all Mastra references
-- **Removed**: TypeScript code samples; all snippets are now Python (Pydantic, openai SDK, httpx, asyncio)
-- **Added**: `react_loop.py` — a direct ReAct implementation replacing what Mastra's Agent class does
-- **Added**: `tool_caller.py` — the tool dispatch layer (in-process vs skill-gateway HTTP)
-- **LangGraph**: Kept but rewritten in Python syntax (typed state, StateGraph builder, PostgresSaver)
+This is a stronger fit for a Customer Success agent because signal workflows and conversation workflows have different latency, memory, output, and safety requirements.
 
-### Type system changes
+### What improved
 
-- **Removed**: Zod schemas and TypeScript types
-- **Added**: Pydantic v2 models throughout — `BaseModel`, `Field`, `model_json_schema()`
-- `PlannerOutput` → replaced by returning `tuple[list[TaskPlan], LLMUsage]` directly
-- `TaskPlan` field `depends_on` renamed from `dependsOn` (Python convention)
-- `AgentConfig.skip_reflector_for_simple` added from reflection
+| Area | Improvement |
+|---|---|
+| Domain clarity | `SignalAgentInput` and `ConversationAgentInput` avoid confusion around one overloaded `AgentInput` |
+| Runtime reuse | Both systems share `DelegationManager`, `ReActLoop`, subagents, critic, tools, memory, and tracing |
+| Conversation flexibility | Chat can use `HealthAnalysisAgent`, `PlaybookRetrievalAgent`, and other specialists when needed, not only `CustomerChatAgent` |
+| Safety | `ComplianceCriticAgent` remains a required Reflector before customer-visible output or external writes |
+| Product fit | Signal automation can run async/background while conversation stays low-latency and streaming-aware |
 
-### File layout changes
+### Remaining design risks and required corrections
 
-- `packages/agent-core/` → `packages/agent/` (singular noun, matches existing conventions)
-- `mastra/` subdir removed; replaced by `react_loop.py` + `tool_caller.py`
-- `langgraph/` moved to `apps/agent-service/src/workflow/langgraph/`
+| Risk | Why it matters | Recommended correction |
+|---|---|---|
+| Streaming vs critic approval tension | True token streaming can expose unsafe text before `ComplianceCriticAgent` approves it | Use conservative streaming: stream status/progress or draft internally, then only commit final answer after critic approval; alternatively use sentence-level moderation before streaming chunks |
+| In-process write tools in Phase 1 | Running `send_email`/`send_slack` in-process weakens the sandbox story | In Phase 1, allow in-process read tools freely but gate write tools behind dry-run/action-packet mode unless explicitly approved in a dev environment |
+| Planner overuse for simple chat | An LLM planner on every chat turn may be slow and expensive | Add a fast path: simple FAQ/clarification → `CustomerChatAgent` only; planner runs only when tools/specialists are needed |
+| Duplicate planner logic | `signal_planner.py` and `conversation_planner.py` may drift | Keep shared prompt fragments and role/skill prompt registry in a shared module while preserving domain-specific planner policies |
+| Memory boundaries need stronger detail | Conversation memory, account memory, and signal history can leak or bloat prompts | Implement `runtime/context.py` early with explicit context budgets, tenant scoping, PII masking, and source attribution |
+| Tool permission matrix is underspecified | Conversation should not be able to trigger the same writes as signal automation by default | Add per-orchestrator and per-subagent allowed-tool policies, e.g. conversation defaults to read-only tools, signal can propose writes but critic/policy must approve |
+| Signal source lifecycle is not fully modeled | Signals need deduplication, throttling, idempotency, and suppression windows | Add `signals/normalizer.py`, `signals/detectors.py`, `signals/queue.py`, and signal idempotency keys in the DB plan |
+| LangGraph/Temporal boundaries can blur | Long-running workflows may duplicate orchestrator logic | Use LangGraph/Temporal only for durability/checkpoint/wait; keep reasoning and subagent delegation inside bounded orchestrator calls |
+| Import path caveat remains blocking | Hyphenated package dirs will break Python imports as written | Resolve before coding: rename package dirs to underscore import packages or add proper editable package configuration |
+| Test examples remain illustrative | Some snippets reference fixtures and helpers not yet defined | Treat examples as target shapes; create real tests after package import-path decision |
 
-### Integration changes
+### Recommended implementation adjustments before coding
 
-- **Skill gateway**: Fully defined HTTP API contract (request/response schema) — the original
-  plan mentioned "HTTP POST" but had no defined contract
-- **LLM gateway**: `AgentChatCompletions` class defined — wraps existing `chat_completions`
-  with agent-specific needs (tool schemas, tracing, billing)
-- **Observability**: Langfuse Python SDK used instead of TypeScript tracing API
+1. **Rename the generic entrypoint language**: use `run_signal_agent()` and `run_conversation_agent()` in production paths. Keep `AgentDispatchInput` only for routing.
+2. **Make write tools proposed actions first**: subagents should return `proposed_external_writes`; only the top-level orchestrator emits them after critic approval.
+3. **Add a signal ingestion module**: signals should come from webhooks, scheduled detectors, analytics jobs, CRM/billing syncs, CSM dashboard actions, or conversation-derived events.
+4. **Add a conversation fast path**: not every chat turn needs full planner/subagent fan-out.
+5. **Define policy matrices**: allowed tools by orchestrator, subagent role, tenant, and environment.
+6. **Add idempotency and dedupe**: signal runs should be idempotent to avoid duplicate outreach.
+7. **Make memory source-aware**: each memory excerpt should preserve source, timestamp, tenant, and PII/masking status.
 
-### Content additions
+### Final architecture assessment
 
-- **Section 6.2**: Full `ReActLoop` implementation — the most critical Python-native component
-- **Section 6.3**: `tool_caller.py` dispatcher with in-process vs skill-gateway routing
-- **Section 10.2**: Skill gateway HTTP API contract (fully defined request/response JSON)
-- **Section 14 (this section)**: Explicit mapping of every TypeScript reference to Python equivalent
+The plan is now structurally sound for a B2B Customer Success agent project if the team enforces these invariants:
 
-### Content removed
+- signal and conversation remain separate top-level systems;
+- subagents stay ephemeral and bounded;
+- write actions are proposed by subagents but emitted only by the top-level orchestrator after critic approval;
+- conversation memory and account memory are packed separately with strict tenant scoping;
+- LangGraph/Temporal are used for durability, not as replacement agent brains.
 
-- `examples/src/planner-executor.ts` reference (TypeScript demo)
-- Mastra's `generate()` / `stream()` method examples
-- `@mastra/core`, `@ai-sdk/anthropic` imports
-- Zod schema imports and `.describe()` chains
-- TypeScript interface syntax throughout
-
+The biggest remaining concerns are **streaming safety**, **tool permission boundaries**, and **signal idempotency**. These should be addressed before moving from MVP to production hardening.
