@@ -71,7 +71,7 @@ class TaskPlan(BaseModel):
 
     id: str = Field(default_factory=lambda: f"task_{uuid.uuid4().hex[:8]}")
     description: str
-    skill: str | None = None
+    tool: str | None = None
     params: dict[str, Any] = Field(default_factory=dict)
     depends_on: list[str] = Field(default_factory=list)
     type: TaskType = TaskType.QUERY

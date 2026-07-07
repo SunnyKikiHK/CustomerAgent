@@ -51,14 +51,14 @@ class SubagentContextPacket(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     tenant_id: str
-    customer_id: str
+    customer_id: str # the customer being acted on (not the user)
     trace_id: str | None = None
-    task: SubagentTask
+    task: SubagentTask # the actual bounded task to execute
     tenant_constraints: list[str] = Field(default_factory=list)
     memory_excerpt: str | None = None
     # The processed textual text or raw dictionary payloads produced by previous subagents in the pipeline
-    dependency_markdown: dict[str, str] = Field(default_factory=dict)
-    dependency_data: dict[str, dict[str, Any]] = Field(default_factory=dict)
+    dependency_markdown: dict[str, str] = Field(default_factory=dict) # use by LM 
+    dependency_data: dict[str, dict[str, Any]] = Field(default_factory=dict) # use by tool call / compliance critic
 
 
 class ToolCallRecord(BaseModel):

@@ -1,7 +1,7 @@
-"""Skill/tool registry for LLM tool-calling and execution.
+"""Tool registry for LLM tool-calling and execution.
 
 The Phase 1 tools execute in-process. Later phases can route sandboxed tools to
-skill-gateway while preserving the same registry contract.
+tool-gateway while preserving the same registry contract.
 """
 
 from __future__ import annotations
@@ -10,14 +10,14 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from typing import Any, Protocol
 
-from packages.skill_system.src.tools.query_health import TOOL_DEFINITION as QUERY_HEALTH_DEFINITION
-from packages.skill_system.src.tools.query_health import execute_query_health
-from packages.skill_system.src.tools.query_playbooks import TOOL_DEFINITION as QUERY_PLAYBOOKS_DEFINITION
-from packages.skill_system.src.tools.query_playbooks import execute_query_playbooks
-from packages.skill_system.src.tools.send_email import TOOL_DEFINITION as SEND_EMAIL_DEFINITION
-from packages.skill_system.src.tools.send_email import execute_send_email
-from packages.skill_system.src.tools.send_slack import TOOL_DEFINITION as SEND_SLACK_DEFINITION
-from packages.skill_system.src.tools.send_slack import execute_send_slack
+from packages.tool_system.src.tools.query_health import TOOL_DEFINITION as QUERY_HEALTH_DEFINITION
+from packages.tool_system.src.tools.query_health import execute_query_health
+from packages.tool_system.src.tools.query_playbooks import TOOL_DEFINITION as QUERY_PLAYBOOKS_DEFINITION
+from packages.tool_system.src.tools.query_playbooks import execute_query_playbooks
+from packages.tool_system.src.tools.send_email import TOOL_DEFINITION as SEND_EMAIL_DEFINITION
+from packages.tool_system.src.tools.send_email import execute_send_email
+from packages.tool_system.src.tools.send_slack import TOOL_DEFINITION as SEND_SLACK_DEFINITION
+from packages.tool_system.src.tools.send_slack import execute_send_slack
 
 
 ToolExecutor = Callable[..., Awaitable[Any]]

@@ -1,8 +1,7 @@
 # Agent Implementation Plan
 
 > This document maps the agent engine design onto the existing Python-based CustomerAgent codebase.
-> It is the implementation blueprint for the `apps/agent-service/` and `packages/agent/` packages.
-> Read this alongside `docs/README.md` for full system context.
+> It is the implementation blueprint for the `apps/agent-service/` and `packages/agent/` packages. Read this alongside `README.md` for full system context.
 
 ---
 
@@ -13,7 +12,7 @@ Its responsibilities:
 
 - Classify incoming customer signals (usage drops, support tickets, NPS changes, renewal dates)
 - Decide what action to take (send email, post Slack, schedule meeting, update CRM, generate QBR)
-- Execute skills safely (sandboxed external API calls via skill-gateway)
+- Execute tools safely (sandboxed external API calls via tool-gateway)
 - Evaluate outcomes and follow up or escalate
 - Persist execution state for long-running workflows (48-hour waits, human-in-the-loop approvals)
 
@@ -21,7 +20,7 @@ Its responsibilities:
 
 - The HTTP gateway that receives webhooks and enqueues jobs (`apps/api-gateway`)
 - The LLM gateway that routes/limits/caches LLM calls (`packages/llm-gateway`)
-- The skill sandbox that actually runs external API calls (`apps/skill-gateway`, `packages/skill-system`)
+- The tool sandbox that actually runs external API calls (`apps/tool-gateway`, `packages/tool-system`)
 - The session state machine (`packages/session`)
 - The observability layer (`packages/observability`)
 
@@ -33,10 +32,12 @@ Its responsibilities:
 
 The platform uses **two top-level agent systems** because signal automation and customer conversation have different latency, memory, safety, and output requirements:
 
-| Top-level system | Primary input | Primary purpose | Runtime style |
-|---|---|---|---|
-| `SignalOrchestrator` | `SignalAgentInput` / `CustomerSignal` | Proactive customer-success automation | Async/background P-E-R run |
+
+| Top-level system           | Primary input                            | Primary purpose                          | Runtime style                   |
+| -------------------------- | ---------------------------------------- | ---------------------------------------- | ------------------------------- |
+| `SignalOrchestrator`       | `SignalAgentInput` / `CustomerSignal`    | Proactive customer-success automation    | Async/background P-E-R run      |
 | `ConversationOrchestrator` | `ConversationAgentInput` / `ChatMessage` | Interactive customer-facing conversation | Low-latency/streaming P-E-R run |
+
 
 They are separate orchestration systems, but they **share the same runtime primitives**:
 
@@ -56,11 +57,13 @@ This avoids a confusing generic orchestrator while also avoiding duplicated agen
 
 Both top-level systems run the same **Planner → Executor → Reflector (P-E-R)** lifecycle:
 
-| P-E-R phase | Signal system owner | Conversation system owner | Shared responsibility |
-|---|---|---|---|
-| Planner | `SignalOrchestrator` | `ConversationOrchestrator` | Build an `OrchestratorPlan` of role-based `SubagentTask` objects |
-| Executor | `DelegationManager` | `DelegationManager` | Spin up scoped ephemeral subagents with local ReAct loops |
-| Reflector | `ComplianceCriticAgent` | `ComplianceCriticAgent` | Evaluate `SubagentResult` objects before output, writes, or streaming completion |
+
+| P-E-R phase | Signal system owner     | Conversation system owner  | Shared responsibility                                                            |
+| ----------- | ----------------------- | -------------------------- | -------------------------------------------------------------------------------- |
+| Planner     | `SignalOrchestrator`    | `ConversationOrchestrator` | Build an `OrchestratorPlan` of role-based `SubagentTask` objects                 |
+| Executor    | `DelegationManager`     | `DelegationManager`        | Spin up scoped ephemeral subagents with local ReAct loops                        |
+| Reflector   | `ComplianceCriticAgent` | `ComplianceCriticAgent`    | Evaluate `SubagentResult` objects before output, writes, or streaming completion |
+
 
 The top-level orchestrator owns the request from start to finish. It is the master brain and synchronization coordinator for:
 
@@ -74,27 +77,31 @@ Subagents are **not durable agents** and do not own the customer outcome. They a
 
 ### Why Two Top-Level Systems
 
-| Dimension | `SignalOrchestrator` | `ConversationOrchestrator` |
-|---|---|---|
-| Trigger | Backend/system event | Customer message or chat turn |
-| Sender | Webhook, scheduled detector, CRM/billing sync, analytics job, CSM dashboard, or conversation-derived event | Authenticated chat endpoint |
-| Latency target | Seconds to minutes | Sub-second first token when streaming |
-| Memory | Account memory and signal history; conversation memory optional | Conversation memory required |
-| Output | Draft outreach, Slack alert, CRM update request, escalation, QBR/refund workflow | Customer-facing chat response |
-| Side-effect risk | Wrong proactive action or external mutation | Bad customer-facing answer or unsafe disclosure |
-| Long-running support | Common; can hand off to LangGraph/Temporal | Rare; should stay bounded and responsive |
+
+| Dimension            | `SignalOrchestrator`                                                                                       | `ConversationOrchestrator`                      |
+| -------------------- | ---------------------------------------------------------------------------------------------------------- | ----------------------------------------------- |
+| Trigger              | Backend/system event                                                                                       | Customer message or chat turn                   |
+| Sender               | Webhook, scheduled detector, CRM/billing sync, analytics job, CSM dashboard, or conversation-derived event | Authenticated chat endpoint                     |
+| Latency target       | Seconds to minutes                                                                                         | Sub-second first token when streaming           |
+| Memory               | Account memory and signal history; conversation memory optional                                            | Conversation memory required                    |
+| Output               | Draft outreach, Slack alert, CRM update request, escalation, QBR/refund workflow                           | Customer-facing chat response                   |
+| Side-effect risk     | Wrong proactive action or external mutation                                                                | Bad customer-facing answer or unsafe disclosure |
+| Long-running support | Common; can hand off to LangGraph/Temporal                                                                 | Rare; should stay bounded and responsive        |
+
 
 ### Subagent Isolation and Skill Prompts
 
 Neither top-level orchestrator executes raw low-level script tools from its own context window. During the Executor phase it delegates work to dedicated sub-nodes via customized **Skill Prompts**. Each `SubagentTask` specifies a role, objective, allowed tools, local input, dependency IDs, and output contract.
 
-| Subagent role | Used by signal? | Used by conversation? | Example purpose |
-|---|---:|---:|---|
-| `HealthAnalysisAgent` | Yes | Sometimes | Analyze account health, usage trend, tickets, NPS, renewal risk |
-| `PlaybookRetrievalAgent` | Yes | Sometimes | Retrieve and rank relevant CS playbooks, policies, and KB docs |
-| `OutreachDraftAgent` | Yes | Rarely | Draft customer-safe proactive email/Slack/CRM text |
-| `CustomerChatAgent` | Rarely | Yes | Interpret chat intent and compose conversational answer candidates |
-| `ComplianceCriticAgent` | Yes | Yes | Review aggregated results before writes or customer-visible output |
+
+| Subagent role            | Used by signal? | Used by conversation? | Example purpose                                                    |
+| ------------------------ | --------------- | --------------------- | ------------------------------------------------------------------ |
+| `HealthAnalysisAgent`    | Yes             | Sometimes             | Analyze account health, usage trend, tickets, NPS, renewal risk    |
+| `PlaybookRetrievalAgent` | Yes             | Sometimes             | Retrieve and rank relevant CS playbooks, policies, and KB docs     |
+| `OutreachDraftAgent`     | Yes             | Rarely                | Draft customer-safe proactive email/Slack/CRM text                 |
+| `CustomerChatAgent`      | Rarely          | Yes                   | Interpret chat intent and compose conversational answer candidates |
+| `ComplianceCriticAgent`  | Yes             | Yes                   | Review aggregated results before writes or customer-visible output |
+
 
 A conversation run can use subagents beyond `CustomerChatAgent`. For example, a customer asking “why did our usage drop before renewal?” may trigger `HealthAnalysisAgent` and `PlaybookRetrievalAgent`, then return to `CustomerChatAgent` for final conversational wording.
 
@@ -140,6 +147,8 @@ flowchart TD
     W --> M
 ```
 
+
+
 ### Domain Boundary Decision
 
 `CustomerSignal` and `ChatMessage` stay as **separate domain objects**:
@@ -151,15 +160,17 @@ They should not be merged. The dispatch layer may expose a union type for routin
 
 ### Runtime Decision Matrix
 
-| Scenario | Runtime | Reason |
-|---|---|---|
-| Usage drop, renewal risk, NPS drop, support escalation | `SignalOrchestrator` P-E-R | Async proactive automation with account-memory and action policy |
-| Customer-facing chat turn | `ConversationOrchestrator` P-E-R | Low-latency conversational loop with required memory |
-| Chat asks account-health question | `ConversationOrchestrator` → `CustomerChatAgent` + `HealthAnalysisAgent` → critic | Conversation remains top-level owner; specialists supply evidence |
-| Proactive outreach from signal | `SignalOrchestrator` → health/playbook/draft subagents → critic | Specialist work is isolated; final action is centrally approved |
-| Complex multi-step QBR generation | LangGraph nodes call `SignalOrchestrator`/subagents for bounded work | Needs checkpoint, long-running execution, replay |
-| Human-in-the-loop refund approval | LangGraph + orchestrator-approved action packets | Interrupt + checkpoint required |
-| Long wait steps ("wait 48h for reply") | Temporal owns wait; `SignalOrchestrator` handles active steps | Process crash resilience |
+
+| Scenario                                               | Runtime                                                                           | Reason                                                            |
+| ------------------------------------------------------ | --------------------------------------------------------------------------------- | ----------------------------------------------------------------- |
+| Usage drop, renewal risk, NPS drop, support escalation | `SignalOrchestrator` P-E-R                                                        | Async proactive automation with account-memory and action policy  |
+| Customer-facing chat turn                              | `ConversationOrchestrator` P-E-R                                                  | Low-latency conversational loop with required memory              |
+| Chat asks account-health question                      | `ConversationOrchestrator` → `CustomerChatAgent` + `HealthAnalysisAgent` → critic | Conversation remains top-level owner; specialists supply evidence |
+| Proactive outreach from signal                         | `SignalOrchestrator` → health/playbook/draft subagents → critic                   | Specialist work is isolated; final action is centrally approved   |
+| Complex multi-step QBR generation                      | LangGraph nodes call `SignalOrchestrator`/subagents for bounded work              | Needs checkpoint, long-running execution, replay                  |
+| Human-in-the-loop refund approval                      | LangGraph + orchestrator-approved action packets                                  | Interrupt + checkpoint required                                   |
+| Long wait steps ("wait 48h for reply")                 | Temporal owns wait; `SignalOrchestrator` handles active steps                     | Process crash resilience                                          |
+
 
 ### Shared Runtime Stack
 
@@ -317,19 +328,21 @@ They are separate domain objects and meet only through `AgentInput` in `orchestr
 
 ### Key Changes to Existing Files
 
-| File | Change |
-|---|---|
-| `packages/db/src/schema.sql` | Add `task_history`, `subagent_calls`, `orchestrator_runs`, and memory tables for audit |
-| `apps/agent-service/src/rq_worker.py` | Import and call `orchestrate()` instead of inline logic |
-| `apps/agent-service/src/agent/signal/` | New `SignalOrchestrator`, signal planner, and signal reducer for proactive workflows |
-| `apps/agent-service/src/agent/conversation/` | New `ConversationOrchestrator`, conversation planner, and streaming coordinator |
-| `apps/agent-service/src/agent/orchestrator/` | Shared base orchestration, reducer helpers, and policy layer |
-| `apps/agent-service/src/agent/subagents/` | Shared specialist subagents: health, playbook, outreach draft, chat, compliance critic |
-| `packages/agent/src/orchestration_types.py` | Add `SignalAgentInput`, `ConversationAgentInput`, optional dispatch union, `OrchestratorPlan`, `FinalDecision` |
-| `packages/agent/src/subagent_types.py` | Add `AgentRole`, `SubagentTask`, `SubagentResult` |
-| `packages/llm-gateway/src/router.py` | Future plan: add `model_for_agent_task()` method for Orchestrator/Subagent routing |
-| `apps/skill-gateway/src/index.py` | Future plan: sandboxed execution backend for approved tool calls |
-| `requirements.txt` | Add `openai`, `langgraph`, `pydantic`, `httpx` |
+
+| File                                         | Change                                                                                                         |
+| -------------------------------------------- | -------------------------------------------------------------------------------------------------------------- |
+| `packages/db/src/schema.sql`                 | Add `task_history`, `subagent_calls`, `orchestrator_runs`, and memory tables for audit                         |
+| `apps/agent-service/src/rq_worker.py`        | Import and call `orchestrate()` instead of inline logic                                                        |
+| `apps/agent-service/src/agent/signal/`       | New `SignalOrchestrator`, signal planner, and signal reducer for proactive workflows                           |
+| `apps/agent-service/src/agent/conversation/` | New `ConversationOrchestrator`, conversation planner, and streaming coordinator                                |
+| `apps/agent-service/src/agent/orchestrator/` | Shared base orchestration, reducer helpers, and policy layer                                                   |
+| `apps/agent-service/src/agent/subagents/`    | Shared specialist subagents: health, playbook, outreach draft, chat, compliance critic                         |
+| `packages/agent/src/orchestration_types.py`  | Add `SignalAgentInput`, `ConversationAgentInput`, optional dispatch union, `OrchestratorPlan`, `FinalDecision` |
+| `packages/agent/src/subagent_types.py`       | Add `AgentRole`, `SubagentTask`, `SubagentResult`                                                              |
+| `packages/llm-gateway/src/router.py`         | Future plan: add `model_for_agent_task()` method for Orchestrator/Subagent routing                             |
+| `apps/tool-gateway/src/index.py`             | Future plan: sandboxed execution backend for approved tool calls                                               |
+| `requirements.txt`                           | Add `openai`, `langgraph`, `pydantic`, `httpx`                                                                 |
+
 
 ---
 
@@ -339,9 +352,9 @@ All types use **Pydantic v2** for validation, serialization, and JSON Schema gen
 (which is passed to the LLM for tool-calling parameter validation).
 
 > **Import-path caveat (resolve before Phase 1 coding):** the code samples below import from
-> `packages.llm_gateway`, `packages.skill_system`, `packages.agent`, and `apps.agent_service`
+> `packages.llm_gateway`, `packages.tool_system`, `packages.agent`, and `apps.agent_service`
 > (underscores), but the real directories are hyphenated (`packages/llm-gateway`,
-> `packages/skill-system`, `apps/agent-service`) and `packages/agent/` does not exist yet.
+> `packages/tool-system`, `apps/agent-service`) and `packages/agent/` does not exist yet.
 > Hyphens are **not valid** in Python module names, so these imports will not work as written.
 > See Open Question #6 for the two resolution options.
 
@@ -409,14 +422,16 @@ class AgentDispatchInput(BaseModel):
 
 The Planner phase produces an `OrchestratorPlan`, not a flat list of raw tool tasks. Each task describes a **subagent role** and a bounded handoff contract. The Executor phase turns these tasks into ephemeral subagent runs, and the Reflector phase evaluates the aggregated results before any write or customer-visible emission.
 
-| Model | Created by | Consumed by | Purpose |
-|---|---|---|---|
-| `OrchestratorPlan` | Planner phase | Delegation manager | Ordered role-based subagent sequence |
-| `SubagentTask` | Orchestrator planner | Ephemeral subagent | Scoped objective, tool boundary, dependency contract |
-| `SubagentContextPacket` | Delegation manager | Ephemeral subagent | Tenant-safe local context and previous markdown outputs |
-| `SubagentResult` | Ephemeral subagent | Orchestrator reducer + critic | Structured result, markdown summary, tool evidence |
-| `ComplianceReview` | Reflector phase | Orchestrator | Approval, redactions, policy findings, blocked writes |
-| `FinalDecision` | Orchestrator | API/workflow caller | Approved response/action payload only |
+
+| Model                   | Created by           | Consumed by                   | Purpose                                                 |
+| ----------------------- | -------------------- | ----------------------------- | ------------------------------------------------------- |
+| `OrchestratorPlan`      | Planner phase        | Delegation manager            | Ordered role-based subagent sequence                    |
+| `SubagentTask`          | Orchestrator planner | Ephemeral subagent            | Scoped objective, tool boundary, dependency contract    |
+| `SubagentContextPacket` | Delegation manager   | Ephemeral subagent            | Tenant-safe local context and previous markdown outputs |
+| `SubagentResult`        | Ephemeral subagent   | Orchestrator reducer + critic | Structured result, markdown summary, tool evidence      |
+| `ComplianceReview`      | Reflector phase      | Orchestrator                  | Approval, redactions, policy findings, blocked writes   |
+| `FinalDecision`         | Orchestrator         | API/workflow caller           | Approved response/action payload only                   |
+
 
 ```python
 # packages/agent/src/subagent_types.py
@@ -548,7 +563,7 @@ class FinalDecision(BaseModel):
 
 ### Core Types
 
-`TaskPlan`/`TaskResult` should not be the primary runtime contract for the Target Phase. Keep low-level tool schemas in the skill system, but the agent runtime exchanges `OrchestratorPlan`, `SubagentTask`, `SubagentResult`, `ComplianceReview`, and `FinalDecision`.
+`TaskPlan`/`TaskResult` should not be the primary runtime contract for the Target Phase. Keep low-level tool schemas in the tool system, but the agent runtime exchanges `OrchestratorPlan`, `SubagentTask`, `SubagentResult`, `ComplianceReview`, and `FinalDecision`.
 
 ```python
 # packages/agent/src/types.py
@@ -635,7 +650,7 @@ class AgentConfig(BaseModel):
     instructions: str                       # system prompt
     model: str                              # e.g. "claude-sonnet-4-7-2025-06-09"
     planner_model: str                       # model for Orchestrator/critic (can differ from subagents)
-    tools: list[str]                        # list of available skill names
+    tools: list[str]                        # list of available tool names
     skip_critic_for_simple: bool = True     # auto-skip for single-query tasks
     max_replan_attempts: int = 2           # max critic → delegation planner retry cycles
     memory_enabled: bool = True             # conversation memory (Target Phase; required for chat)
@@ -648,29 +663,33 @@ Config is loaded from `tenants` DB table at startup and cached in Redis with a 5
 
 ## 5. Tool Definitions
 
-Tools live in `packages/skill-system/src/tools/` and are registered in the skill-gateway registry.
-The Orchestrator/Subagent runtime references them by name and dispatches via HTTP to skill-gateway.
+Tools live in `packages/tool-system/src/tools/` and are registered in the tool-gateway registry.
+The Orchestrator/Subagent runtime references them by name and dispatches via HTTP to tool-gateway.
 
 ### 5.1 Core CS Tools (Phase 1 — MVP)
 
-| Tool ID | Description | External Call |
-|---|---|---|
-| `query_health` | Query a customer's health score, usage trend, support tickets, NPS, MRR, renewal | Internal DB call |
-| `query_playbooks` | Retrieve the most relevant playbook(s) for a given signal type | Internal DB + vector search |
-| `send_email` | Send a personalized email via SendGrid | skill-gateway → SendGrid |
-| `send_slack` | Send a Slack DM to a CSM | skill-gateway → Slack API |
-| `update_crm` | Write a note/update to Salesforce | skill-gateway → Salesforce |
-| `schedule_meeting` | Send a Google Calendar invite | skill-gateway → Google Calendar |
+
+| Tool ID            | Description                                                                      | External Call                  |
+| ------------------ | -------------------------------------------------------------------------------- | ------------------------------ |
+| `query_health`     | Query a customer's health score, usage trend, support tickets, NPS, MRR, renewal | Internal DB call               |
+| `query_playbooks`  | Retrieve the most relevant playbook(s) for a given signal type                   | Internal DB + vector search    |
+| `send_email`       | Send a personalized email via SendGrid                                           | tool-gateway → SendGrid        |
+| `send_slack`       | Send a Slack DM to a CSM                                                         | tool-gateway → Slack API       |
+| `update_crm`       | Write a note/update to Salesforce                                                | tool-gateway → Salesforce      |
+| `schedule_meeting` | Send a Google Calendar invite                                                    | tool-gateway → Google Calendar |
+
 
 ### 5.2 Advanced Tools (Phase 2)
 
-| Tool ID | Description |
-|---|---|
-| `query_order` | Query tenant's order/usage system for account-level data |
-| `generate_qbr` | Draft a QBR presentation (calls LLM + PDF generator) |
-| `query_knowledge_base` | Semantic search over tenant's playbooks/documents via pgvector |
-| `escalate_to_csm` | Mark a customer as escalated, assign to a human CSM |
-| `initiate_refund` | Submit a refund request (→ LangGraph approval workflow if > threshold) |
+
+| Tool ID                | Description                                                            |
+| ---------------------- | ---------------------------------------------------------------------- |
+| `query_order`          | Query tenant's order/usage system for account-level data               |
+| `generate_qbr`         | Draft a QBR presentation (calls LLM + PDF generator)                   |
+| `query_knowledge_base` | Semantic search over tenant's playbooks/documents via pgvector         |
+| `escalate_to_csm`      | Mark a customer as escalated, assign to a human CSM                    |
+| `initiate_refund`      | Submit a refund request (→ LangGraph approval workflow if > threshold) |
+
 
 ### Tool Schema Definition
 
@@ -678,7 +697,7 @@ Each tool is defined as a Pydantic model with a JSON Schema. The JSON Schema is 
 and passed to the LLM for tool-calling.
 
 ```python
-# packages/skill-system/src/tools/query_health.py
+# packages/tool-system/src/tools/query_health.py
 from pydantic import BaseModel, Field
 from typing import Optional
 import httpx
@@ -729,7 +748,7 @@ async def execute_query_health(
     ...
 
 
-# packages/skill-system/src/tools/send_email.py
+# packages/tool-system/src/tools/send_email.py
 class SendEmailInput(BaseModel):
     recipient_email: str = Field(description="Recipient email address")
     subject: str = Field(description="Email subject line")
@@ -755,7 +774,7 @@ TOOL_DEFINITION = {
 ### Tool Registry
 
 ```python
-# packages/skill-system/src/registry.py
+# packages/tool-system/src/registry.py
 from dataclasses import dataclass
 from typing import Callable, Any
 from .tools.query_health import TOOL_DEFINITION as QUERY_HEALTH, execute_query_health
@@ -788,6 +807,7 @@ def get_tools_for_tenant(tenant_config: AgentConfig) -> list[dict]:
 ```
 
 > **Tool description writing rules** (from lecture, adapted):
+>
 > - description must state preconditions ("call query_health first")
 > - description must state what NOT to do ("do not include raw PII")
 > - each field's `description=` must explain the parameter
@@ -799,10 +819,12 @@ def get_tools_for_tenant(tenant_config: AgentConfig) -> list[dict]:
 
 The Target Phase uses two top-level systems on one shared runtime:
 
-| Top-level orchestrator | Planner module | Entry point | Shared runtime pieces |
-|---|---|---|---|
-| `SignalOrchestrator` | `agent/signal/signal_planner.py` | `run_signal_agent()` | `DelegationManager`, `ReActLoop`, subagents, critic |
+
+| Top-level orchestrator     | Planner module                               | Entry point                | Shared runtime pieces                               |
+| -------------------------- | -------------------------------------------- | -------------------------- | --------------------------------------------------- |
+| `SignalOrchestrator`       | `agent/signal/signal_planner.py`             | `run_signal_agent()`       | `DelegationManager`, `ReActLoop`, subagents, critic |
 | `ConversationOrchestrator` | `agent/conversation/conversation_planner.py` | `run_conversation_agent()` | `DelegationManager`, `ReActLoop`, subagents, critic |
+
 
 Both orchestrators run Planner → Executor → Reflector. The Planner differs by input domain; the Executor and Reflector are shared.
 
@@ -1117,34 +1139,34 @@ async def dispatch_tool_call(
     """
     Dispatch a tool call. Routes to:
     - In-process execution for DB-only tools (query_health, etc.)
-    - skill-gateway HTTP API for external API tools (send_email, etc.)
+    - tool-gateway HTTP API for external API tools (send_email, etc.)
 
-    This is the sandbox boundary. External API calls never happen outside skill-gateway.
+    This is the sandbox boundary. External API calls never happen outside tool-gateway.
     """
-    from packages.skill_system.src.registry import TOOL_REGISTRY
+    from packages.tool_system.src.registry import TOOL_REGISTRY
 
     entry = TOOL_REGISTRY.get(tool_name)
     if not entry:
         raise ValueError(f"Unknown tool: {tool_name}")
 
     if entry.requires_sandbox:
-        return await _dispatch_to_skill_gateway(tool_name, params, ctx)
+        return await _dispatch_to_tool_gateway(tool_name, params, ctx)
     else:
         return await entry.execute(params, ctx)
 
 
-async def _dispatch_to_skill_gateway(
+async def _dispatch_to_tool_gateway(
     tool_name: str,
     params: dict,
     ctx: SessionContext,
 ) -> dict:
     """
-    Call the skill-gateway HTTP API to execute a sandboxed skill.
+    Call the tool-gateway HTTP API to execute a sandboxed tool.
 
     Request:
-        POST {skill_gateway_url}/run
+        POST {tool_gateway_url}/run
         {
-            "skill": "send_email",
+            "tool": "send_email",
             "params": {...},
             "tenant_id": "...",
             "trace_id": "..."
@@ -1157,9 +1179,9 @@ async def _dispatch_to_skill_gateway(
     """
     async with httpx.AsyncClient(timeout=30.0) as client:
         response = await client.post(
-            f"{skill_gateway_url}/run",
+            f"{tool_gateway_url}/run",
             json={
-                "skill": tool_name,
+                "tool": tool_name,
                 "params": params,
                 "tenant_id": ctx.tenant_id,
                 "trace_id": ctx.trace_id,
@@ -1169,7 +1191,7 @@ async def _dispatch_to_skill_gateway(
         result = response.json()
 
         if not result.get("success"):
-            raise RuntimeError(f"Skill {tool_name} failed: {result.get('error')}")
+            raise RuntimeError(f"Tool {tool_name} failed: {result.get('error')}")
 
         return result["data"]
 ```
@@ -1590,14 +1612,16 @@ and runs as a multi-turn conversation with streamed responses.
 
 ### 8.1 How Chat Differs from Signal-Driven Outreach
 
-| Dimension | Signal-driven outreach (§1–§7) | Customer chat (this section) |
-|---|---|---|
-| Trigger | `CustomerSignal` (usage drop, renewal, ...) | Inbound customer message |
-| Entry point | RQ job → `orchestrate()` | HTTP request → chat handler |
-| Turn model | One-shot (plan → act → reflect) | Multi-turn, conversational |
-| Response | Email / Slack / CRM action | Streamed text back to the customer |
-| Memory | Optional context | **Required** — every turn reads/writes memory (§7) |
-| Latency target | Seconds to minutes | Sub-second first token (streaming) |
+
+| Dimension      | Signal-driven outreach (§1–§7)              | Customer chat (this section)                       |
+| -------------- | ------------------------------------------- | -------------------------------------------------- |
+| Trigger        | `CustomerSignal` (usage drop, renewal, ...) | Inbound customer message                           |
+| Entry point    | RQ job → `orchestrate()`                    | HTTP request → chat handler                        |
+| Turn model     | One-shot (plan → act → reflect)             | Multi-turn, conversational                         |
+| Response       | Email / Slack / CRM action                  | Streamed text back to the customer                 |
+| Memory         | Optional context                            | **Required** — every turn reads/writes memory (§7) |
+| Latency target | Seconds to minutes                          | Sub-second first token (streaming)                 |
+
 
 Chat reuses the same shared runtime primitives — `ConversationOrchestrator` (§6), the ReAct loop (§6.2), the tool registry (§5), and conversation memory (§7). It does **not** run signal-outreach automation on every turn. For a typical chat turn, `ConversationOrchestrator` plans a `CustomerChatAgent` task, optionally adds specialist subagents such as `HealthAnalysisAgent` or `PlaybookRetrievalAgent`, runs `ComplianceCriticAgent`, then streams or returns the approved response.
 
@@ -1770,7 +1794,7 @@ def execute_refund(state: RefundState) -> RefundState:
         return state
 
     refund_id = f"RF{int(asyncio.get_event_loop().time() * 1000)}"
-    # Call skill-gateway → send refund API
+    # Call tool-gateway → send refund API
     print(f"[refund] Executing refund: {refund_id}")
     return {"refund_id": refund_id}
 
@@ -1833,8 +1857,8 @@ class QBRState(TypedDict):
 
 def gather_data(state: QBRState) -> QBRState:
     """Gather all customer data needed for QBR."""
-    # Call query_health skill
-    # Call query_playbooks skill
+    # Call query_health tool
+    # Call query_playbooks tool
     # Aggregate results
     return {
         **state,
@@ -1935,19 +1959,19 @@ async def process_signal_job(job):
     )
 ```
 
-### 10.2 Skill Gateway Protocol
+### 10.2 Tool Gateway Protocol
 
-The skill-gateway exposes a single HTTP API. Both Orchestrator/Subagent tool dispatch and LangGraph
+The tool-gateway exposes a single HTTP API. Both Orchestrator/Subagent tool dispatch and LangGraph
 activities call this endpoint.
 
 **Request:**
 
 ```http
-POST {SKILL_GATEWAY_URL}/run
+POST {TOOL_GATEWAY_URL}/run
 Content-Type: application/json
 
 {
-  "skill": "send_email",
+  "tool": "send_email",
   "params": {
     "recipient_email": "user@example.com",
     "subject": "Your Monthly Report",
@@ -2064,7 +2088,7 @@ trace.metadata["critic_tokens"] = response.critic_tokens
 
 > **Interim approach (gateways deferred):** Phase 1 calls the LLM provider directly through a
 > thin `openai` SDK wrapper (`llm_client.py`) and executes all tools **in-process**. The dedicated
-> **LLM Gateway** and **Skill Gateway** are moved to "Future Plan — Gateways" below. Phase 1 still
+> **LLM Gateway** and **Tool Gateway** are moved to "Future Plan — Gateways" below. Phase 1 still
 > preserves the final architecture by separating `SignalOrchestrator` and `ConversationOrchestrator`
 > while sharing `DelegationManager`, `ReActLoop`, subagents, and `ComplianceCriticAgent`.
 
@@ -2074,23 +2098,23 @@ Phase 1 deliverables (Core Agent):
 
 - [x] `packages/agent/src/types.py` — Pydantic models: `CustomerSignal`, `SessionContext`, `AgentResponse`, `LLMUsage`
 - [x] `packages/agent/src/config.py` — `AgentConfig` per tenant
-- [ ] `packages/agent/src/orchestration_types.py` — `SignalAgentInput`, `ConversationAgentInput`, `AgentDispatchInput`, `OrchestratorPlan`, `ComplianceReview`, `FinalDecision`
-- [ ] `packages/agent/src/subagent_types.py` — `AgentRole`, `SubagentTask`, `SubagentContextPacket`, `SubagentResult`, `ToolCallRecord`
-- [ ] `packages/agent/src/chat_types.py` — `ChatMessage`, `ChatRequest`, `ChatResponse` Pydantic models
-- [ ] `apps/agent-service/src/agent/llm_client.py` — thin `openai` SDK wrapper (direct provider call + Langfuse tracing), interim stand-in for the LLM Gateway
-- [x] `packages/skill-system/src/registry.py` — `TOOL_REGISTRY`, `get_tool_definition()`, `get_tools_for_tenant()`
-- [ ] Core tools: `query_health`, `query_playbooks`, `send_email`, `send_slack` with proper Pydantic schemas (executed **in-process** in Phase 1)
+- [x] `packages/agent/src/orchestration_types.py` — `SignalAgentInput`, `ConversationAgentInput`, `AgentDispatchInput`, `OrchestratorPlan`, `ComplianceReview`, `FinalDecision`
+- [x] `packages/agent/src/subagent_types.py` — `AgentRole`, `SubagentTask`, `SubagentContextPacket`, `SubagentResult`, `ToolCallRecord`
+- [x] `packages/agent/src/chat_types.py` — `ChatMessage`, `ChatRequest`, `ChatResponse` Pydantic models
+- [x] `apps/agent-service/src/agent/llm_client.py` — thin `openai` SDK wrapper (direct provider call + Langfuse tracing), interim stand-in for the LLM Gateway
+- [x] `packages/tool-system/src/registry.py` — `TOOL_REGISTRY`, `get_tool_definition()`, `get_tools_for_tenant()`
+- [x] Core tools: `query_health`, `query_playbooks`, `send_email`, `send_slack` with proper Pydantic schemas (executed **in-process** in Phase 1)
 
 #### Shared runtime
 
-- [ ] `apps/agent-service/src/agent/orchestrator/base.py` — shared P-E-R base/protocols used by both top-level systems
-- [ ] `apps/agent-service/src/agent/orchestrator/planning_prompts.py` — shared role skill prompt registry and planner helpers
-- [ ] `apps/agent-service/src/agent/orchestrator/reducer.py` — merges `SubagentResult` objects into `FinalDecision`
-- [ ] `apps/agent-service/src/agent/orchestrator/policy.py` — tenant policy, approval, and output guardrail helpers
-- [ ] `apps/agent-service/src/agent/runtime/react_loop.py` — shared ReAct loop for tool-using subagents
-- [ ] `apps/agent-service/src/agent/runtime/delegation.py` — subagent manager with dependency-aware execution and markdown dependency injection
-- [ ] `apps/agent-service/src/agent/runtime/context.py` — context packing for signal/account memory and conversation memory slices
-- [ ] `apps/agent-service/src/agent/runtime/tool_caller.py` — tool dispatcher (**in-process only** in Phase 1; skill-gateway routing deferred)
+- [x] `apps/agent-service/src/agent/orchestrator/base.py` — shared P-E-R base/protocols used by both top-level systems
+- [x] `apps/agent-service/src/agent/orchestrator/planning_prompts.py` — shared role skill prompt registry and planner helpers
+- [x] `apps/agent-service/src/agent/orchestrator/reducer.py` — merges `SubagentResult` objects into `FinalDecision`
+- [x] `apps/agent-service/src/agent/orchestrator/policy.py` — tenant policy, approval, and output guardrail helpers
+- [x] `apps/agent-service/src/agent/runtime/react_loop.py` — shared ReAct loop for tool-using subagents
+- [x] `apps/agent-service/src/agent/runtime/delegation.py` — subagent manager with dependency-aware execution and markdown dependency injection
+- [x] `apps/agent-service/src/agent/runtime/context.py` — context packing for signal/account memory and conversation memory slices
+- [x] `apps/agent-service/src/agent/runtime/tool_caller.py` — tool dispatcher (**in-process only** in Phase 1; tool-gateway routing deferred)
 
 #### Shared subagents
 
@@ -2125,7 +2149,7 @@ Phase 1 deliverables (Core Agent):
 - [ ] Unit tests: conversation planner, chat turn reads/writes memory, multi-turn context preservation
 - [ ] Integration tests: signal → `SignalOrchestrator` → approved draft/action; chat → `ConversationOrchestrator` → approved response
 
-### Future Plan — Gateways (LLM Gateway + Skill Gateway)
+### Future Plan — Gateways (LLM Gateway + Tool Gateway)
 
 These two gateways are **not built in Phase 1**. Phase 1 runs on the `llm_client` shim and
 in-process tool execution. This phase introduces the dedicated gateways and migrates the agent
@@ -2135,10 +2159,10 @@ onto them.
 - [ ] `packages/llm-gateway/src/router.py` — `model_for_agent_task()` per-request model routing
 - [ ] `packages/llm-gateway/src/cache.py` — prompt/semantic caching (Redis + pgvector)
 - [ ] `packages/llm-gateway/src/circuit.py` — circuit breaker (state in Redis)
-- [ ] `apps/skill-gateway/src/index.py` — sandboxed skill runner exposing the `POST /run` HTTP API
-- [ ] Extend `apps/agent-service/src/agent/runtime/tool_caller.py` to route `requires_sandbox` tools to skill-gateway over HTTP
-- [ ] Migrate write tools (`send_email`, `send_slack`, `update_crm`, ...) from in-process to skill-gateway sandbox execution
-- [ ] Integration tests: LLM Gateway routing/caching; skill-gateway sandbox isolation
+- [ ] `apps/tool-gateway/src/index.py` — sandboxed tool runner exposing the `POST /run` HTTP API
+- [ ] Extend `apps/agent-service/src/agent/runtime/tool_caller.py` to route `requires_sandbox` tools to tool-gateway over HTTP
+- [ ] Migrate write tools (`send_email`, `send_slack`, `update_crm`, ...) from in-process to tool-gateway sandbox execution
+- [ ] Integration tests: LLM Gateway routing/caching; tool-gateway sandbox isolation
 
 ### Phase 2 — Advanced Capabilities (Future Plan)
 
@@ -2155,9 +2179,9 @@ onto them.
 ### Phase 3 — Production Hardening (Future Plan)
 
 - [ ] Token accounting per tenant per model (integrate with llm-gateway billing, was Phase 3, keep here)
-- [ ] Circuit breaker per skill (skill-gateway already has; wire it up)
-- [ ] Rate limiting per tenant per skill
-- [ ] PII masking middleware in `tool_caller.py` (apply `packages/auth/` masking before skill calls)
+- [ ] Circuit breaker per tool (tool-gateway already has; wire it up)
+- [ ] Rate limiting per tenant per tool
+- [ ] PII masking middleware in `tool_caller.py` (apply `packages/auth/` masking before tool calls)
 - [ ] Audit log: every task execution written to `task_history` table
 - [ ] Replan loop with attempt limit and alerting
 - [ ] Load testing: 100 concurrent agent runs, measure p95 latency
@@ -2262,20 +2286,19 @@ def test_compliance_review_blocks_external_writes_with_pii(review_with_pii):
 ## 13. Open Questions
 
 1. **LLM model per Orchestrator/Subagent role**: Should Orchestrator, critic, and specialist subagents use the same model, or cheaper/faster models per role
-   (for example Haiku for classification/critic and Sonnet for complex execution)? Keep per-role model config as the default.
-
-2. **Skill-gateway protocol**: HTTP POST is simple but adds ~50-200ms latency per tool call.
-   Consider a shared Redis stream for lower-latency skill dispatch if latency becomes a concern.
+  (for example Haiku for classification/critic and Sonnet for complex execution)? Keep per-role model config as the default.
+2. **Tool-gateway protocol**: HTTP POST is simple but adds ~50-200ms latency per tool call.
+  Consider a shared Redis stream for lower-latency tool dispatch if latency becomes a concern.
 3. **Memory retention policy**: How many days of conversation history per customer?
-   Affects Postgres storage and embedding costs.
+  Affects Postgres storage and embedding costs.
 4. **Redelegation/retry threshold**: When `ComplianceCriticAgent` or the reducer says "not satisfied", how many retries before
-   escalating to a human? Current plan: configurable `max_replan_attempts` (default 2).
+  escalating to a human? Current plan: configurable `max_replan_attempts` (default 2).
 5. **LangGraph vs Temporal for long waits**: LangGraph Python interrupt is clean for < 1 hour waits.
-   Temporal is more battle-tested for > 1 hour. For 48-hour reply waits, should we use
+  Temporal is more battle-tested for > 1 hour. For 48-hour reply waits, should we use
    LangGraph interrupt or Temporal workflow with a signal channel? Recommendation: Temporal
    for waits > 1 hour, LangGraph for human approval interruptions.
 6. **Python import paths vs hyphenated directories**: the current dirs (`packages/llm-gateway`,
-   `packages/skill-system`, `apps/agent-service`) use hyphens, which are invalid in Python module
+  `packages/tool-system`, `apps/agent-service`) use hyphens, which are invalid in Python module
    names. Two options: (a) rename the package source dirs to underscores
    (`packages/llm_gateway`, ...) and import directly, or (b) keep hyphenated repo dirs but define
    installable distributions in `pyproject.toml` that map import names to underscore packages
@@ -2297,28 +2320,32 @@ This is a stronger fit for a Customer Success agent because signal workflows and
 
 ### What improved
 
-| Area | Improvement |
-|---|---|
-| Domain clarity | `SignalAgentInput` and `ConversationAgentInput` avoid confusion around one overloaded `AgentInput` |
-| Runtime reuse | Both systems share `DelegationManager`, `ReActLoop`, subagents, critic, tools, memory, and tracing |
+
+| Area                     | Improvement                                                                                                                   |
+| ------------------------ | ----------------------------------------------------------------------------------------------------------------------------- |
+| Domain clarity           | `SignalAgentInput` and `ConversationAgentInput` avoid confusion around one overloaded `AgentInput`                            |
+| Runtime reuse            | Both systems share `DelegationManager`, `ReActLoop`, subagents, critic, tools, memory, and tracing                            |
 | Conversation flexibility | Chat can use `HealthAnalysisAgent`, `PlaybookRetrievalAgent`, and other specialists when needed, not only `CustomerChatAgent` |
-| Safety | `ComplianceCriticAgent` remains a required Reflector before customer-visible output or external writes |
-| Product fit | Signal automation can run async/background while conversation stays low-latency and streaming-aware |
+| Safety                   | `ComplianceCriticAgent` remains a required Reflector before customer-visible output or external writes                        |
+| Product fit              | Signal automation can run async/background while conversation stays low-latency and streaming-aware                           |
+
 
 ### Remaining design risks and required corrections
 
-| Risk | Why it matters | Recommended correction |
-|---|---|---|
-| Streaming vs critic approval tension | True token streaming can expose unsafe text before `ComplianceCriticAgent` approves it | Use conservative streaming: stream status/progress or draft internally, then only commit final answer after critic approval; alternatively use sentence-level moderation before streaming chunks |
-| In-process write tools in Phase 1 | Running `send_email`/`send_slack` in-process weakens the sandbox story | In Phase 1, allow in-process read tools freely but gate write tools behind dry-run/action-packet mode unless explicitly approved in a dev environment |
-| Planner overuse for simple chat | An LLM planner on every chat turn may be slow and expensive | Add a fast path: simple FAQ/clarification → `CustomerChatAgent` only; planner runs only when tools/specialists are needed |
-| Duplicate planner logic | `signal_planner.py` and `conversation_planner.py` may drift | Keep shared prompt fragments and role/skill prompt registry in a shared module while preserving domain-specific planner policies |
-| Memory boundaries need stronger detail | Conversation memory, account memory, and signal history can leak or bloat prompts | Implement `runtime/context.py` early with explicit context budgets, tenant scoping, PII masking, and source attribution |
-| Tool permission matrix is underspecified | Conversation should not be able to trigger the same writes as signal automation by default | Add per-orchestrator and per-subagent allowed-tool policies, e.g. conversation defaults to read-only tools, signal can propose writes but critic/policy must approve |
-| Signal source lifecycle is not fully modeled | Signals need deduplication, throttling, idempotency, and suppression windows | Add `signals/normalizer.py`, `signals/detectors.py`, `signals/queue.py`, and signal idempotency keys in the DB plan |
-| LangGraph/Temporal boundaries can blur | Long-running workflows may duplicate orchestrator logic | Use LangGraph/Temporal only for durability/checkpoint/wait; keep reasoning and subagent delegation inside bounded orchestrator calls |
-| Import path caveat remains blocking | Hyphenated package dirs will break Python imports as written | Resolve before coding: rename package dirs to underscore import packages or add proper editable package configuration |
-| Test examples remain illustrative | Some snippets reference fixtures and helpers not yet defined | Treat examples as target shapes; create real tests after package import-path decision |
+
+| Risk                                         | Why it matters                                                                             | Recommended correction                                                                                                                                                                           |
+| -------------------------------------------- | ------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Streaming vs critic approval tension         | True token streaming can expose unsafe text before `ComplianceCriticAgent` approves it     | Use conservative streaming: stream status/progress or draft internally, then only commit final answer after critic approval; alternatively use sentence-level moderation before streaming chunks |
+| In-process write tools in Phase 1            | Running `send_email`/`send_slack` in-process weakens the sandbox story                     | In Phase 1, allow in-process read tools freely but gate write tools behind dry-run/action-packet mode unless explicitly approved in a dev environment                                            |
+| Planner overuse for simple chat              | An LLM planner on every chat turn may be slow and expensive                                | Add a fast path: simple FAQ/clarification → `CustomerChatAgent` only; planner runs only when tools/specialists are needed                                                                        |
+| Duplicate planner logic                      | `signal_planner.py` and `conversation_planner.py` may drift                                | Keep shared prompt fragments and role/skill prompt registry in a shared module while preserving domain-specific planner policies                                                                 |
+| Memory boundaries need stronger detail       | Conversation memory, account memory, and signal history can leak or bloat prompts          | Implement `runtime/context.py` early with explicit context budgets, tenant scoping, PII masking, and source attribution                                                                          |
+| Tool permission matrix is underspecified     | Conversation should not be able to trigger the same writes as signal automation by default | Add per-orchestrator and per-subagent allowed-tool policies, e.g. conversation defaults to read-only tools, signal can propose writes but critic/policy must approve                             |
+| Signal source lifecycle is not fully modeled | Signals need deduplication, throttling, idempotency, and suppression windows               | Add `signals/normalizer.py`, `signals/detectors.py`, `signals/queue.py`, and signal idempotency keys in the DB plan                                                                              |
+| LangGraph/Temporal boundaries can blur       | Long-running workflows may duplicate orchestrator logic                                    | Use LangGraph/Temporal only for durability/checkpoint/wait; keep reasoning and subagent delegation inside bounded orchestrator calls                                                             |
+| Import path caveat remains blocking          | Hyphenated package dirs will break Python imports as written                               | Resolve before coding: rename package dirs to underscore import packages or add proper editable package configuration                                                                            |
+| Test examples remain illustrative            | Some snippets reference fixtures and helpers not yet defined                               | Treat examples as target shapes; create real tests after package import-path decision                                                                                                            |
+
 
 ### Recommended implementation adjustments before coding
 
