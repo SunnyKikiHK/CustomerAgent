@@ -64,9 +64,9 @@ CustomerAgent/
 │   │   └── src/
 │   │       └── rq_worker.py       # RQ worker entry point
 │   │
-│   ├── skill-gateway/             # Tool registry + sandbox execution
+│   ├── tool-gateway/             # Tool registry + sandbox execution
 │   │   └── src/
-│   │       └── index.py           # Sandboxed skill runner
+│   │       └── index.py           # Sandboxed tool runner
 │   │
 │   └── temporal-worker/            # Temporal workflow worker
 │       └── src/
@@ -87,9 +87,9 @@ CustomerAgent/
 │   │       ├── router.py          # Picks the right model per request
 │   │       ├── cache.py           # Semantic cache (Redis + pgvector)
 │   │       └── circuit.py         # Circuit breaker (state stored in Redis)
-│   ├── skill-system/              # Skill registry + sandbox definitions
+│   ├── tool-system/              # Tool registry + sandbox definitions
 │   │   └── src/
-│   │       ├── registry.py        # Skill registration and discovery
+│   │       ├── registry.py        # Tool registration and discovery
 │   │       └── sandbox.py        # Sandboxed execution (RestrictedPython / subprocess)
 │   ├── session/                   # State machine types + Temporal workflow helpers
 │   │   └── src/
@@ -150,7 +150,7 @@ CustomerAgent/
         calls    │          │              │ calls
                  ▼          ▼              ▼
         ┌──────────────┐ ┌──────┐ ┌──────────────────┐
-        │ llm-gateway  │ │ RAG  │ │  skill-gateway   │
+        │ llm-gateway  │ │ RAG  │ │  tool-gateway   │
         │ (packages/)  │ │      │ │   (apps/)        │
         └──────┬───────┘ └──────┘ └────────┬─────────┘
                │          │                  │
@@ -213,11 +213,11 @@ A single entry point for all LLM calls, with three responsibilities:
 - **Prompt caching** — caches customer profiles and playbooks so the same context is not re-sent on every LLM call. A typical workload sees roughly **80% cost reduction** after caching.
 - **Billing** — records every token used per tenant per model, so we can bill each customer company for their actual LLM spend.
 
-### 3.3 Skill Sandbox (Safe Tool Execution)
+### 3.3 Tool Sandbox (Safe Tool Execution)
 
-Skills are the "hands" of the agent — they actually send emails, query Salesforce, post to Slack. Running untrusted code is dangerous, so each skill runs in a sandbox with explicit permissions. The `skill-gateway` app runs the sandbox as a separate OS process:
+Tools are the "hands" of the agent — they actually send emails, query Salesforce, post to Slack. Running untrusted code is dangerous, so each tool runs in a sandbox with explicit permissions. The `tool-gateway` app runs the sandbox as a separate OS process:
 
-| Skill | Network | Files | Rate Limit | Extra Validation |
+| Tool | Network | Files | Rate Limit | Extra Validation |
 |---|---|---|---|---|
 | `send-email` | SendGrid / Mailgun only | Read templates | 100/hr per tenant | Email format + rate check |
 | `send-slack` | Slack API only | None | 1000/hr per tenant | Channel ID validation |
@@ -273,7 +273,7 @@ The platform serves many B2B SaaS companies. Customer data for Acme must never l
 
 ### 3.9 Observability (OpenTelemetry + Langfuse)
 
-- **OpenTelemetry** (`packages/observability/`) traces every LLM call, every skill execution, and every database query. The full chain — "the planner decided X, then the email skill sent Y" — is visible in Jaeger / Grafana.
+- **OpenTelemetry** (`packages/observability/`) traces every LLM call, every tool execution, and every database query. The full chain — "the planner decided X, then the email tool sent Y" — is visible in Jaeger / Grafana.
 - **Langfuse** (`packages/observability/`) specifically tracks AI quality: prompt, response, model, token usage, and a quality score ("was this email effective? did the customer respond positively?").
 
 ---
@@ -327,7 +327,7 @@ Here is what happens when the agent decides to reach out to a customer.
   ┌────────────────────────────────────────────────────────────────────┐
   │ STEP 7 — Approved emission / action request                        │
   │ If approved, SignalOrchestrator emits the final response or        │
-  │ approved write payloads through skill-gateway. It then writes      │
+  │ approved write payloads through tool-gateway. It then writes      │
   │ memory and audit logs. If blocked, it replans or escalates.        │
   └──────────────────────────────┬─────────────────────────────────────┘
                                  ▼
@@ -341,14 +341,14 @@ Here is what happens when the agent decides to reach out to a customer.
   │ STEP 9a — Reply received (happy path)                            │
   │ Temporal detects the reply. State → reply_received.               │
   │ ConversationOrchestrator runs on the reply. If approved, it       │
-  │ submits a meeting or follow-up action through skill-gateway.      │
+  │ submits a meeting or follow-up action through tool-gateway.      │
   └──────────────────────────────┬─────────────────────────────────────┘
                                  ▼
   ┌────────────────────────────────────────────────────────────────────┐
   │ STEP 9b — No reply (escalation path)                             │
   │ Temporal times out after 48 hours. State → escalated.            │
   │ SignalOrchestrator prepares a CSM escalation packet, Reflector    │
-  │ approves it, and skill-gateway sends the Slack DM.               │
+  │ approves it, and tool-gateway sends the Slack DM.               │
   └──────────────────────────────┬─────────────────────────────────────┘
                                  ▼
   ┌────────────────────────────────────────────────────────────────────┐
@@ -364,8 +364,8 @@ Here is what happens when the agent decides to reach out to a customer.
 
 ### Why split `packages/` and `apps/`?
 
-- **`packages` are libraries** that the apps import. They hold business logic — the LLM router, the RAG retriever, the skill registry, the DB schema, the auth layer — that can be unit-tested in isolation.
-- **`apps` are processes**. `api-gateway` serves HTTP. `agent-service` runs the agent loop. `temporal-worker` runs workflows. `skill-gateway` runs untrusted skill code.
+- **`packages` are libraries** that the apps import. They hold business logic — the LLM router, the RAG retriever, the tool registry, the DB schema, the auth layer — that can be unit-tested in isolation.
+- **`apps` are processes**. `api-gateway` serves HTTP. `agent-service` runs the agent loop. `temporal-worker` runs workflows. `tool-gateway` runs untrusted tool code.
 - In production, each app is deployed as an **independent service** that scales separately. A traffic spike to the HTTP API does not starve the worker, and a slow workflow does not slow down the API. They share logic through `packages/` only, never by importing each other.
 
 ### Why split signal automation and conversation, but share the P-E-R runtime?
@@ -387,9 +387,9 @@ Without a gateway, every part of the code would call OpenAI / Anthropic / Google
 - **A single place to cache** — without it, two unrelated code paths would re-send the same context to the LLM and pay for it twice.
 - **A single place to count tokens** for billing.
 
-### Why a separate skill-gateway process?
+### Why a separate tool-gateway process?
 
-A skill is, in effect, code that the LLM wrote and we are about to run. The LLM can hallucinate — it might generate a `send-email` call with a wrong address, or even a `salesforce-query` with a `DELETE` statement. By running skills in a separate process with explicit permissions (allowed domains, rate limits, query validation), we contain the blast radius of any bug or prompt-injection attack. If the sandbox crashes, the main agent is unaffected.
+A tool is, in effect, code that the LLM wrote and we are about to run. The LLM can hallucinate — it might generate a `send-email` call with a wrong address, or even a `salesforce-query` with a `DELETE` statement. By running tools in a separate process with explicit permissions (allowed domains, rate limits, query validation), we contain the blast radius of any bug or prompt-injection attack. If the sandbox crashes, the main agent is unaffected.
 
 ### Why Temporal for long waits?
 
@@ -411,7 +411,7 @@ Temporal is a workflow engine. A typical CS workflow is full of "wait 48 hours, 
 - **MRR** — Monthly Recurring Revenue. How much this customer pays per month.
 - **CSM** — Customer Success Manager. A human who owns the relationship with a set of customers.
 - **Playbook** — A standard workflow for handling a situation (e.g. "at-risk recovery", "renewal", "expansion").
-- **Skill** — A tool the agent can invoke (e.g. `send-email`, `salesforce-query`).
+- **Tool** — A tool the agent can invoke (e.g. `send-email`, `salesforce-query`).
 - **QBR** — Quarterly Business Review. A presentation given to the customer summarizing their usage, value, and upcoming opportunities.
 - **NPS** — Net Promoter Score. A measure of customer satisfaction, from 0 to 10.
 - **PII** — Personally Identifiable Information (emails, phone numbers, credit cards).
@@ -426,14 +426,14 @@ Temporal is a workflow engine. A typical CS workflow is full of "wait 48 hours, 
 |---|---|---|
 | `apps/api-gateway` | HTTP service (FastAPI) | `src/app.py`, `src/routes/`, `src/plugins/` |
 | `apps/agent-service` | Agent core (`SignalOrchestrator`, `ConversationOrchestrator`, shared P-E-R runtime, ephemeral subagents, Reflector) | `src/rq_worker.py`, `src/agent/signal/`, `src/agent/conversation/`, `src/agent/orchestrator/`, `src/agent/runtime/`, `src/agent/subagents/` |
-| `apps/skill-gateway` | Sandboxed skill execution | `src/index.py` |
+| `apps/tool-gateway` | Sandboxed tool execution | `src/index.py` |
 | `apps/temporal-worker` | Temporal workflow worker | `src/temporal.py` |
 | `packages/shared` | Shared types and utilities | `src/` |
 | `packages/config` | Env schema + config loading | `src/` |
 | `packages/db` | SQLAlchemy models + Alembic migrations | `src/`, `migrations/` |
 | `packages/redis` | Redis client (tenant-namespaced) | `src/` |
 | `packages/llm-gateway` | LLM routing, caching, billing | `router.py`, `cache.py`, `circuit.py` |
-| `packages/skill-system` | Skill registry + sandbox definitions | `registry.py`, `sandbox.py` |
+| `packages/tool-system` | Tool registry + sandbox definitions | `registry.py`, `sandbox.py` |
 | `packages/knowledge-service` | RAG pipeline | `ingest.py`, `embed.py`, `retrieve.py` |
 | `packages/session` | State machine + Temporal helpers | `workflow.py`, `activities.py`, `state.py` |
 | `packages/observability` | Tracing + AI quality | `tracer.py`, `langfuse.py` |
