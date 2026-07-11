@@ -7,11 +7,23 @@ from typing import Any
 
 from packages.agent.src.subagent_types import SubagentContextPacket
 
+from apps.agent_service.src.agent.runtime.skills import get_skill_manager
 
-def build_system_prompt(packet: SubagentContextPacket, tool_docs: list[str]) -> str:
+
+def build_system_prompt(
+    packet: SubagentContextPacket,
+    tool_docs: list[str],
+    *,
+    message_for_skills: str = "",
+) -> str:
     task = packet.task
+    skill_block = get_skill_manager(packet.tenant_id).prompt_for(
+        message_for_skills or task.objective,
+        agent_role=task.role.value,
+    )
+    injected_skills = f"\n\n{skill_block}" if skill_block else ""
     return (
-        f"{task.skill_prompt}\n\n"
+        f"{task.skill}{injected_skills}\n\n"
         "You are an ephemeral subagent. Complete only the assigned task. "
         "Do not write long-term memory, do not emit final customer-visible output, "
         "and do not call tools outside the allowed list.\n\n"

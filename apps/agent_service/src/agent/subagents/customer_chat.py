@@ -15,7 +15,7 @@ ROLE = AgentRole.CUSTOMER_CHAT
 #: Chat answers using read-only lookups; it does not send email/slack itself.
 DEFAULT_ALLOWED_TOOLS = ["query_health", "query_playbooks"]
 
-SKILL_PROMPT = (
+SKILL = (
     "You are CustomerChatAgent, a customer conversation specialist. Answer the "
     "current chat turn using the bounded memory excerpt, prior subagent evidence, "
     "and approved read-only tools. Stay grounded in provided context, keep a "
@@ -30,7 +30,7 @@ class CustomerChatAgent(ReActSubagent):
 
     role = ROLE
     default_allowed_tools = DEFAULT_ALLOWED_TOOLS
-    skill_prompt = SKILL_PROMPT
+    skill = SKILL
 
 
-__all__ = ["CustomerChatAgent", "ROLE", "DEFAULT_ALLOWED_TOOLS", "SKILL_PROMPT"]
+__all__ = ["CustomerChatAgent", "ROLE", "DEFAULT_ALLOWED_TOOLS", "SKILL"]

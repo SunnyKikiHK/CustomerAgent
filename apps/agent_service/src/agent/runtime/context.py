@@ -7,7 +7,8 @@ subagent sees unrelated tenant/global context.
 
 from __future__ import annotations
 
-from packages.agent.src.subagent_types import SubagentContextPacket, SubagentResult, SubagentTask
+from packages.agent.src.memory import MemoryContext
+from packages.agent.src.subagent_types import AgentRole, SubagentContextPacket, SubagentResult, SubagentTask
 from packages.agent.src.types import SessionContext
 
 
@@ -51,4 +52,28 @@ def select_dependency_results(
     }
 
 
-__all__ = ["build_context_packet", "select_dependency_results"]
+PROFILE_ROLES = {AgentRole.HEALTH_ANALYSIS, AgentRole.OUTREACH_DRAFT}
+
+
+def fuse_memory_excerpt(
+    *,
+    memory_context: MemoryContext | None,
+    task_role: AgentRole,
+    budget_chars: int = 6000,
+) -> str | None:
+    """Fuse memory tiers into a role-appropriate excerpt."""
+    if memory_context is None:
+        return None
+    if task_role in PROFILE_ROLES:
+        return memory_context.profile_excerpt(max_chars=min(budget_chars, 1200))
+    if task_role == AgentRole.CUSTOMER_CHAT:
+        return memory_context.to_prompt_text(max_chars=budget_chars)
+    return None
+
+
+__all__ = [
+    "build_context_packet",
+    "select_dependency_results",
+    "fuse_memory_excerpt",
+    "PROFILE_ROLES",
+]

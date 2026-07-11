@@ -3,17 +3,22 @@
 from __future__ import annotations
 
 import asyncio
+import time
 from collections.abc import Iterable
 
 from packages.agent.src.config import AgentConfig
+from packages.agent.src.memory import MemoryContext
 from packages.agent.src.orchestration_types import OrchestratorPlan
 from packages.agent.src.subagent_types import SubagentResult, SubagentTask
 from packages.agent.src.types import SessionContext
 
 from apps.agent_service.src.agent.runtime.context import (
     build_context_packet,
+    fuse_memory_excerpt,
     select_dependency_results,
 )
+from apps.agent_service.src.agent.runtime.monitor import get_performance_monitor
+from apps.agent_service.src.agent.runtime.mcp.tool_layer import get_mcp_tool_layer
 from apps.agent_service.src.agent.subagents import build_subagent
 
 
@@ -25,6 +30,7 @@ async def execute_tasks(
     customer_id: str,
     tenant_constraints: list[str],
     memory_excerpt: str | None,
+    memory_context: MemoryContext | None = None,
 ) -> list[SubagentResult]:
     """Execute ready subagent tasks in dependency-aware batches."""
     # fail fast if the plan itself is malformed before running anything
@@ -58,6 +64,7 @@ async def execute_tasks(
                     customer_id=customer_id,
                     tenant_constraints=tenant_constraints,
                     memory_excerpt=memory_excerpt,
+                    memory_context=memory_context,
                 )
                 for task in ready
             ),
@@ -96,21 +103,42 @@ async def _run_subagent(
     customer_id: str,
     tenant_constraints: list[str],
     memory_excerpt: str | None,
+    memory_context: MemoryContext | None = None,
 ) -> SubagentResult:
-    # pull only the prior results this task declared as dependencies
+    monitor = get_performance_monitor()
+    penalty = monitor.get_routing_penalty(task.role.value)
+    if penalty >= 0.9:
+        return SubagentResult(
+            task_id=task.id,
+            role=task.role,
+            success=False,
+            markdown="",
+            error=f"Role {task.role.value} is temporarily downgraded by monitor",
+        )
+
+    started = time.monotonic()
     dependency_results = select_dependency_results(task, result_map)
-    # assemble a scoped, tenant-safe bundle for the subagent
+    role_memory = fuse_memory_excerpt(
+        memory_context=memory_context,
+        task_role=task.role,
+    )
     packet = build_context_packet(
         task=task,
         ctx=ctx,
         customer_id=customer_id,
         tenant_constraints=tenant_constraints,
-        memory_excerpt=memory_excerpt,
+        memory_excerpt=role_memory or memory_excerpt,
         dependency_results=dependency_results,
     )
-    # pick the role-specialized subagent (falls back to generic ReAct subagent)
     subagent = build_subagent(packet=packet, ctx=ctx, config=config)
-    return await subagent.run()
+    result = await subagent.run()
+    monitor.record_role_result(
+        task.role.value,
+        success=result.success,
+        latency_ms=(time.monotonic() - started) * 1000,
+    )
+    monitor.refresh_penalties(get_mcp_tool_layer().get_stats())
+    return result
 
 
 def _validate_plan_dependencies(tasks: Iterable[SubagentTask]) -> None:

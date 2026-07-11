@@ -29,14 +29,14 @@ class ReActSubagent:
     """Default subagent that delegates to a scoped ReAct loop.
 
     Specialist subclasses declare their `role`, `default_allowed_tools`, and
-    `skill_prompt` as class attributes. The concrete per-task values still come
+    `skill` as class attributes. The concrete per-task values still come
     from the planner-produced `SubagentTask` inside the packet; the class-level
     attributes document the role contract and drive the role factory below.
     """
 
     role: ClassVar[AgentRole | None] = None
     default_allowed_tools: ClassVar[list[str]] = []
-    skill_prompt: ClassVar[str] = ""
+    skill: ClassVar[str] = ""
 
     def __init__(
         self,

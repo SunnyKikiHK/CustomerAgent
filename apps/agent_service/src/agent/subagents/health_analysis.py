@@ -15,7 +15,7 @@ ROLE = AgentRole.HEALTH_ANALYSIS
 #: Read-only tools this role may call. Health analysis never writes.
 DEFAULT_ALLOWED_TOOLS = ["query_health"]
 
-SKILL_PROMPT = (
+SKILL = (
     "You are HealthAnalysisAgent, a customer-success health and risk specialist. "
     "Use only scoped account-health inputs and the query_health tool. Assess the "
     "customer's health score, usage trend, support load, NPS, MRR, and renewal "
@@ -30,7 +30,7 @@ class HealthAnalysisAgent(ReActSubagent):
 
     role = ROLE
     default_allowed_tools = DEFAULT_ALLOWED_TOOLS
-    skill_prompt = SKILL_PROMPT
+    skill = SKILL
 
 
-__all__ = ["HealthAnalysisAgent", "ROLE", "DEFAULT_ALLOWED_TOOLS", "SKILL_PROMPT"]
+__all__ = ["HealthAnalysisAgent", "ROLE", "DEFAULT_ALLOWED_TOOLS", "SKILL"]

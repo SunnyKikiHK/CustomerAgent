@@ -12,6 +12,7 @@ from abc import ABC, abstractmethod
 from typing import Any
 
 from packages.agent.src.config import AgentConfig
+from packages.agent.src.memory import MemoryContext
 from packages.agent.src.orchestration_types import (
     ComplianceReview,
     ConversationAgentInput,
@@ -93,11 +94,21 @@ class BaseOrchestrator(ABC):
     ) -> None:
         """Hook for audit logging, always invoked at the end of a run."""
 
+    async def load_execution_memory_context(
+        self,
+        agent_input: AgentInput,
+        ctx: SessionContext,
+        config: AgentConfig,
+    ) -> MemoryContext | None:
+        """Load structured memory for role-specific delegation slices."""
+        return None
+
     async def run(self, agent_input: AgentInput, ctx: SessionContext) -> AgentResponse:
         """Execute Planner -> Executor -> Reflector and assemble the response."""
         config = await self.load_config(ctx)
         tenant_constraints = await self.load_tenant_constraints(ctx)
         memory_excerpt = await self.load_memory_excerpt(agent_input, ctx, config)
+        memory_context = await self.load_execution_memory_context(agent_input, ctx, config)
 
         plan, planner_usage = await self.build_plan(
             agent_input=agent_input,
@@ -114,6 +125,7 @@ class BaseOrchestrator(ABC):
             customer_id=self.customer_id(agent_input),
             tenant_constraints=tenant_constraints,
             memory_excerpt=memory_excerpt,
+            memory_context=memory_context,
         )
 
         proposed_external_writes = (

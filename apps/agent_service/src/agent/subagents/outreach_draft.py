@@ -15,7 +15,7 @@ ROLE = AgentRole.OUTREACH_DRAFT
 #: Outreach may propose writes, but release is gated by the compliance critic.
 DEFAULT_ALLOWED_TOOLS = ["send_email", "send_slack"]
 
-SKILL_PROMPT = (
+SKILL = (
     "You are OutreachDraftAgent, a customer-facing outreach specialist. Draft "
     "safe, personalized, factually grounded outreach using prior subagent "
     "markdown as evidence. Every customer-visible claim must be supported by "
@@ -31,7 +31,7 @@ class OutreachDraftAgent(ReActSubagent):
 
     role = ROLE
     default_allowed_tools = DEFAULT_ALLOWED_TOOLS
-    skill_prompt = SKILL_PROMPT
+    skill = SKILL
 
 
-__all__ = ["OutreachDraftAgent", "ROLE", "DEFAULT_ALLOWED_TOOLS", "SKILL_PROMPT"]
+__all__ = ["OutreachDraftAgent", "ROLE", "DEFAULT_ALLOWED_TOOLS", "SKILL"]

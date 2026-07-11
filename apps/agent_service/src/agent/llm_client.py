@@ -1,4 +1,4 @@
-"""Thin interim OpenAI SDK wrapper with optional Langfuse tracing.
+"""Thin interim OpenRouter wrapper with optional Langfuse tracing.
 
 This module is a direct-provider stand-in until the dedicated LLM Gateway owns
 model routing, caching, billing, and circuit breaking.
@@ -37,7 +37,7 @@ class LLMResponse(BaseModel):
 
 
 class LLMClient:
-    """Small async client for direct OpenAI chat completions."""
+    """Small async client for OpenRouter chat completions (OpenAI-compatible)."""
 
     def __init__(
         self,
@@ -46,8 +46,9 @@ class LLMClient:
         default_model: str | None = None,
         langfuse_client: Any | None = None,
     ) -> None:
-        self._client = AsyncOpenAI(api_key=api_key or os.getenv("OPENAI_API_KEY"))
-        self.default_model = default_model or os.getenv("OPENAI_MODEL", "gpt-4o-mini")
+        self._client = AsyncOpenAI(api_key=api_key or os.getenv("OPENROUTER_API_KEY"),
+            base_url=os.getenv("OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1"))
+        self.default_model = default_model or os.getenv("OPENROUTER_MODEL", "deepseek/deepseek-v4-flash")
         self._langfuse = langfuse_client or self._build_langfuse_client()
 
     async def complete(

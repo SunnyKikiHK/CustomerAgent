@@ -15,7 +15,7 @@ ROLE = AgentRole.PLAYBOOK_RETRIEVAL
 #: Read-only knowledge retrieval only. This role never writes.
 DEFAULT_ALLOWED_TOOLS = ["query_playbooks"]
 
-SKILL_PROMPT = (
+SKILL = (
     "You are PlaybookRetrievalAgent, a retrieval-augmented knowledge specialist. "
     "Use only the query_playbooks tool to retrieve tenant-scoped playbooks and "
     "knowledge snippets relevant to the signal and prior health findings. Never "
@@ -30,7 +30,7 @@ class PlaybookRetrievalAgent(ReActSubagent):
 
     role = ROLE
     default_allowed_tools = DEFAULT_ALLOWED_TOOLS
-    skill_prompt = SKILL_PROMPT
+    skill = SKILL
 
 
-__all__ = ["PlaybookRetrievalAgent", "ROLE", "DEFAULT_ALLOWED_TOOLS", "SKILL_PROMPT"]
+__all__ = ["PlaybookRetrievalAgent", "ROLE", "DEFAULT_ALLOWED_TOOLS", "SKILL"]

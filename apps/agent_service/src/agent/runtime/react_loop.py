@@ -92,7 +92,8 @@ class ReActLoop:
     def _system_prompt(self) -> str:
         registry = _load_tool_registry()
         docs = collect_tool_docs(self.packet.task.allowed_tools, registry)
-        return build_system_prompt(self.packet, docs)
+        message = str(self.packet.task.input.get("message", self.packet.task.objective))
+        return build_system_prompt(self.packet, docs, message_for_skills=message)
 
     def _user_context(self) -> str:
         dependency_markdown = "\n\n".join(
