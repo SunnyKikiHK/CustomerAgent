@@ -401,3 +401,23 @@ CREATE INDEX IF NOT EXISTS idx_qbr_reports_tenant ON qbr_reports(tenant_id, crea
 ALTER TABLE qbr_reports ENABLE ROW LEVEL SECURITY;
 CREATE POLICY qbr_reports_isolation ON qbr_reports
     FOR ALL USING (tenant_id = current_setting('app.current_tenant_id', true)::UUID);
+
+-- ── Integrations: per-user encrypted OAuth credentials (Google/Gmail) ────────
+-- One row per (user, provider). The refresh token is stored encrypted (Fernet,
+-- enc:v1: prefix); the platform OAuth client id/secret live in deployment config.
+-- Users are global (not tenant-scoped), so no RLS here. Kept in sync with Alembic
+-- migration 0005_user_integrations.
+CREATE TABLE IF NOT EXISTS user_integrations (
+    id                UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id           UUID         NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    provider          VARCHAR(40)  NOT NULL DEFAULT 'google',
+    account_email     VARCHAR(320),
+    refresh_token_enc TEXT,                                    -- Fernet ciphertext (enc:v1:...)
+    scopes            TEXT,
+    status            VARCHAR(20)  NOT NULL DEFAULT 'connected',  -- connected, revoked, error
+    connected_at      TIMESTAMPTZ  NOT NULL DEFAULT now(),
+    updated_at        TIMESTAMPTZ  NOT NULL DEFAULT now(),
+    UNIQUE (user_id, provider)
+);
+
+CREATE INDEX IF NOT EXISTS idx_user_integrations_user ON user_integrations(user_id);

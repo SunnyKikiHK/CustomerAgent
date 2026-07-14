@@ -14,9 +14,9 @@ from apps.tool_gateway.src.idempotency import (
     IdempotencyStore,
     get_idempotency_store,
 )
+from apps.tool_gateway.src.email_providers import select_email_provider
 from apps.tool_gateway.src.providers import (
     ActionProvider,
-    MockEmailProvider,
     MockHumanEscalationProvider,
 )
 from packages.tool_system.src.tools.escalate_to_human import EscalateToHumanInput
@@ -42,7 +42,7 @@ class ActionService:
         self.verifier = verifier or get_approval_verifier()
         self.idempotency = idempotency or get_idempotency_store()
         self.providers = providers or {
-            "send_email": MockEmailProvider(),
+            "send_email": select_email_provider(),
             "escalate_to_human": MockHumanEscalationProvider(),
         }
 
