@@ -336,3 +336,42 @@ CREATE INDEX IF NOT EXISTS idx_tenant_memberships_user ON tenant_memberships(use
 CREATE INDEX IF NOT EXISTS idx_tenant_memberships_tenant ON tenant_memberships(tenant_id);
 CREATE INDEX IF NOT EXISTS idx_tenant_memberships_qbr
     ON tenant_memberships(tenant_id) WHERE receives_qbr = TRUE;
+
+-- ── NPS: surveys and responses ──────────────────────────────────────────────
+-- A survey invitation (nps_surveys) is separate from an individual response
+-- (nps_responses). A response score is a single 0-10 answer; the aggregate NPS
+-- (-100..100) is computed deterministically from responses and is never stored
+-- as a customer field. Kept in sync with Alembic migration 0003_nps.
+CREATE TABLE IF NOT EXISTS nps_surveys (
+    id           UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    tenant_id    UUID         NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+    customer_id  UUID         NOT NULL REFERENCES customers(id) ON DELETE CASCADE,
+    status       VARCHAR(20)  NOT NULL DEFAULT 'created',  -- created, sent, responded, expired
+    sent_at      TIMESTAMPTZ,
+    expires_at   TIMESTAMPTZ,
+    responded_at TIMESTAMPTZ,
+    workflow_id  VARCHAR(255),
+    created_at   TIMESTAMPTZ  NOT NULL DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS nps_responses (
+    id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    tenant_id   UUID         NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+    survey_id   UUID         NOT NULL REFERENCES nps_surveys(id) ON DELETE CASCADE,
+    customer_id UUID         NOT NULL REFERENCES customers(id) ON DELETE CASCADE,
+    score       INTEGER      NOT NULL CHECK (score >= 0 AND score <= 10),
+    comment     TEXT,
+    created_at  TIMESTAMPTZ  NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS idx_nps_surveys_tenant ON nps_surveys(tenant_id, status);
+CREATE INDEX IF NOT EXISTS idx_nps_surveys_customer ON nps_surveys(tenant_id, customer_id);
+CREATE INDEX IF NOT EXISTS idx_nps_responses_tenant ON nps_responses(tenant_id);
+CREATE INDEX IF NOT EXISTS idx_nps_responses_survey ON nps_responses(survey_id);
+
+ALTER TABLE nps_surveys ENABLE ROW LEVEL SECURITY;
+ALTER TABLE nps_responses ENABLE ROW LEVEL SECURITY;
+CREATE POLICY nps_surveys_isolation ON nps_surveys
+    FOR ALL USING (tenant_id = current_setting('app.current_tenant_id', true)::UUID);
+CREATE POLICY nps_responses_isolation ON nps_responses
+    FOR ALL USING (tenant_id = current_setting('app.current_tenant_id', true)::UUID);

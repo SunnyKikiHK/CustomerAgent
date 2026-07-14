@@ -19,7 +19,7 @@ class AgentRole(str, Enum):
     Roles are partitioned by domain (enforced by the domain-aware factory in
     ``apps/agent_service/src/agent/subagents/__init__.py``):
 
-    - Signal-only:       HEALTH_ANALYSIS, OUTREACH_DRAFT
+    - Signal-only:       HEALTH_ANALYSIS, OUTREACH_DRAFT, NPS_OUTREACH
     - Conversation-only: GENERAL, TECHNICAL, BILLING, ESCALATION
     - Shared:            PLAYBOOK_RETRIEVAL, COMPLIANCE_CRITIC
     """
@@ -27,6 +27,7 @@ class AgentRole(str, Enum):
     # Signal-only specialists
     HEALTH_ANALYSIS = "health_analysis"
     OUTREACH_DRAFT = "outreach_draft"
+    NPS_OUTREACH = "nps_outreach"
 
     # Conversation-only specialists (General/Technical/Billing routing)
     GENERAL = "general"

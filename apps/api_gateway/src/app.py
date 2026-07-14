@@ -22,6 +22,7 @@ from apps.agent_service.src.agent.runtime.skills import get_skill_manager
 from apps.api_gateway.src.routes.auth import router as auth_router
 from apps.api_gateway.src.routes.chat import router as chat_router
 from apps.api_gateway.src.routes.customers import router as customers_router
+from apps.api_gateway.src.routes.nps import router as nps_router
 from apps.api_gateway.src.routes.signals import router as signals_router
 
 logging.basicConfig(
@@ -73,6 +74,7 @@ _mount(auth_router)
 _mount(chat_router)
 _mount(signals_router)
 _mount(customers_router)
+_mount(nps_router)
 
 
 @app.get("/health")

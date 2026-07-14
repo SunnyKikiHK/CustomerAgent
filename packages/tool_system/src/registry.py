@@ -23,6 +23,16 @@ from packages.tool_system.src.tools.query_playbooks import TOOL_DEFINITION as QU
 from packages.tool_system.src.tools.query_playbooks import execute_query_playbooks
 from packages.tool_system.src.tools.send_email import TOOL_DEFINITION as SEND_EMAIL_DEFINITION
 from packages.tool_system.src.tools.send_email import execute_send_email
+from packages.tool_system.src.tools.nps_tools import (
+    CALCULATE_TENANT_NPS_DEFINITION,
+    CREATE_NPS_SURVEY_DEFINITION,
+    QUERY_NPS_HISTORY_DEFINITION,
+    RECORD_NPS_RESPONSE_DEFINITION,
+    execute_calculate_tenant_nps,
+    execute_create_nps_survey,
+    execute_query_nps_history,
+    execute_record_nps_response,
+)
 
 ToolExecutor = Callable[..., Awaitable[Any]]
 
@@ -185,6 +195,38 @@ def register_builtin_tools() -> None:
         boundary=ToolBoundary.MCP_ACTION,
         side_effecting=True,
         tags=["write", "escalation", "handoff"],
+        overwrite=True,
+    )
+    register_tool(
+        "query_nps_history",
+        QUERY_NPS_HISTORY_DEFINITION,
+        execute_query_nps_history,
+        boundary=ToolBoundary.INTERNAL,
+        tags=["read", "nps"],
+        overwrite=True,
+    )
+    register_tool(
+        "create_nps_survey",
+        CREATE_NPS_SURVEY_DEFINITION,
+        execute_create_nps_survey,
+        boundary=ToolBoundary.INTERNAL,
+        tags=["nps", "survey"],
+        overwrite=True,
+    )
+    register_tool(
+        "record_nps_response",
+        RECORD_NPS_RESPONSE_DEFINITION,
+        execute_record_nps_response,
+        boundary=ToolBoundary.INTERNAL,
+        tags=["nps", "response"],
+        overwrite=True,
+    )
+    register_tool(
+        "calculate_tenant_nps",
+        CALCULATE_TENANT_NPS_DEFINITION,
+        execute_calculate_tenant_nps,
+        boundary=ToolBoundary.INTERNAL,
+        tags=["read", "nps"],
         overwrite=True,
     )
 

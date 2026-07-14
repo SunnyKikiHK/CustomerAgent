@@ -102,6 +102,12 @@ def _outreach_objective(signal_type: str) -> str:
         return "Draft a renewal-save outreach using health and playbook evidence"
     if signal_type == "low_health":
         return "Draft an at-risk recovery outreach using health and playbook evidence"
+    if signal_type == "nps_detractor":
+        return (
+            "Summarize the detractor's feedback and recommend follow-up actions for "
+            "the assigned CSM. Do NOT draft a promotional or automated customer reply; "
+            "this is an internal analysis + CSM notification, not customer outreach."
+        )
     return "Draft proactive outreach using health and playbook evidence"
 
 

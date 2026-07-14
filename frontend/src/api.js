@@ -150,3 +150,14 @@ export function recordUsageEvent(tenantId, customerId, usageTrend) {
     body: JSON.stringify({ usage_trend: usageTrend }),
   });
 }
+
+// --- NPS ------------------------------------------------------------------
+// The response endpoint is customer-facing (no JWT): the surveyed customer
+// submits a 0-10 score for a survey id. Tenant is resolved server-side.
+
+export function submitNpsResponse(tenantId, surveyId, score, comment) {
+  return request(`/nps/surveys/${encodeURIComponent(surveyId)}/response`, {
+    method: "POST",
+    body: JSON.stringify({ tenant_id: tenantId, score, comment: comment || null }),
+  });
+}

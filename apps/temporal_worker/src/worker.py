@@ -22,6 +22,8 @@ from apps.temporal_worker.src.client import (
     temporal_namespace,
     temporal_target,
 )
+from apps.temporal_worker.src.nps_activities import NPS_ACTIVITIES
+from apps.temporal_worker.src.nps_workflows import NpsCampaignWorkflow
 from apps.temporal_worker.src.workflows import (
     ProcessSignalWorkflow,
     TenantSignalScanWorkflow,
@@ -86,8 +88,8 @@ async def main() -> None:
     worker = Worker(
         client,
         task_queue=task_queue(),
-        workflows=[ProcessSignalWorkflow, TenantSignalScanWorkflow],
-        activities=SIGNAL_ACTIVITIES,
+        workflows=[ProcessSignalWorkflow, TenantSignalScanWorkflow, NpsCampaignWorkflow],
+        activities=[*SIGNAL_ACTIVITIES, *NPS_ACTIVITIES],
     )
     logger.info(
         "Temporal worker started (target=%s ns=%s queue=%s)",

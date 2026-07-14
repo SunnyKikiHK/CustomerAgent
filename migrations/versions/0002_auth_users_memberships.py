@@ -24,27 +24,28 @@ def upgrade() -> None:
     op.execute(
         """
         CREATE TABLE IF NOT EXISTS users (
-            id             UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-            email          VARCHAR(255) NOT NULL UNIQUE,
-            full_name      VARCHAR(255),
-            password_hash  VARCHAR(255) NOT NULL,
-            is_platform_admin BOOLEAN   NOT NULL DEFAULT FALSE,
-            disabled       BOOLEAN      NOT NULL DEFAULT FALSE,
-            created_at     TIMESTAMPTZ  NOT NULL DEFAULT now(),
-            updated_at     TIMESTAMPTZ  NOT NULL DEFAULT now()
+            id                UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+            email             VARCHAR(320) NOT NULL UNIQUE,
+            full_name         VARCHAR(255),
+            password_hash     VARCHAR(255) NOT NULL,
+            is_platform_admin BOOLEAN      NOT NULL DEFAULT FALSE,
+            is_active         BOOLEAN      NOT NULL DEFAULT TRUE,
+            created_at        TIMESTAMPTZ  NOT NULL DEFAULT now(),
+            updated_at        TIMESTAMPTZ  NOT NULL DEFAULT now()
         );
         """
     )
     op.execute(
         """
         CREATE TABLE IF NOT EXISTS tenant_memberships (
-            id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-            tenant_id       UUID         NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
-            user_id         UUID         NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-            role            VARCHAR(30)  NOT NULL DEFAULT 'csm',
-            receives_qbr    BOOLEAN      NOT NULL DEFAULT TRUE,
-            notify_prefs    JSONB        NOT NULL DEFAULT '{}'::jsonb,
-            created_at      TIMESTAMPTZ  NOT NULL DEFAULT now(),
+            id                       UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+            tenant_id                UUID         NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+            user_id                  UUID         NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            role                     VARCHAR(50)  NOT NULL DEFAULT 'csm',
+            receives_qbr             BOOLEAN      NOT NULL DEFAULT TRUE,
+            notification_preferences JSONB        NOT NULL DEFAULT '{}'::jsonb,
+            created_at               TIMESTAMPTZ  NOT NULL DEFAULT now(),
+            updated_at               TIMESTAMPTZ  NOT NULL DEFAULT now(),
             UNIQUE (tenant_id, user_id)
         );
         """

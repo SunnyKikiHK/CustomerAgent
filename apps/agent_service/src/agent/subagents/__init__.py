@@ -27,6 +27,7 @@ from packages.agent.src.types import SessionContext
 
 from apps.agent_service.src.agent.subagents.base import BaseSubagent, ReActSubagent
 from apps.agent_service.src.agent.subagents.health_analysis import HealthAnalysisAgent
+from apps.agent_service.src.agent.subagents.nps_outreach import NpsOutreachAgent
 from apps.agent_service.src.agent.subagents.outreach_draft import OutreachDraftAgent
 from apps.agent_service.src.agent.subagents.playbook_retrieval import PlaybookRetrievalAgent
 
@@ -53,6 +54,7 @@ def _signal_specialists() -> dict[AgentRole, type[ReActSubagent]]:
     return {
         AgentRole.HEALTH_ANALYSIS: HealthAnalysisAgent,
         AgentRole.OUTREACH_DRAFT: OutreachDraftAgent,
+        AgentRole.NPS_OUTREACH: NpsOutreachAgent,
     }
 
 
@@ -105,6 +107,7 @@ __all__ = [
     "ReActSubagent",
     "HealthAnalysisAgent",
     "OutreachDraftAgent",
+    "NpsOutreachAgent",
     "PlaybookRetrievalAgent",
     "role_map_for_domain",
     "build_subagent",
