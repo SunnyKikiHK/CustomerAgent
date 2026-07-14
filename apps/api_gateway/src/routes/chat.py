@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Header, HTTPException
+from fastapi import APIRouter, Header, HTTPException, Query
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field
 
 from packages.agent.src.chat_types import ChatMessage, ChatMessageRole, ChatRequest
+from packages.agent.src.memory import get_conversation_memory
 from packages.agent.src.types import SessionContext
 
 from apps.agent_service.src.agent.conversation.chat_handler import handle_chat_turn
@@ -25,6 +26,24 @@ class ChatTurnRequest(BaseModel):
     content: str
     stream: bool = True
     metadata: dict = Field(default_factory=dict)
+
+
+@router.get("/chat/messages")
+async def recent_chat_messages(
+    tenant_id: str = Query(...),
+    customer_id: str = Query(...),
+    limit: int = Query(default=5, ge=1, le=5),
+    x_tenant_id: str | None = Header(default=None, alias="X-Tenant-Id"),
+):
+    """Return up to five recent messages for one tenant-scoped customer."""
+    if x_tenant_id is not None and x_tenant_id != tenant_id:
+        raise HTTPException(status_code=403, detail="Tenant mismatch")
+    messages = await get_conversation_memory().get_recent_messages(
+        tenant_id=tenant_id,
+        customer_id=customer_id,
+        limit=limit,
+    )
+    return {"messages": [message.model_dump(mode="json") for message in messages]}
 
 
 @router.post("/chat/turn")

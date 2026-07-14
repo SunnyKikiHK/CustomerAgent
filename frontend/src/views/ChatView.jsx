@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from "react";
-import { streamChatTurn } from "../api.js";
+import { fetchRecentMessages, streamChatTurn } from "../api.js";
 
 function makeSessionId() {
   return "sess-" + Math.random().toString(36).slice(2, 10);
@@ -11,9 +11,40 @@ export default function ChatView({ tenantId, defaultCustomerId }) {
   const [messages, setMessages] = useState([]);
   const [input, setInput] = useState("");
   const [busy, setBusy] = useState(false);
+  const [loadingHistory, setLoadingHistory] = useState(false);
   const [phase, setPhase] = useState("");
   const [error, setError] = useState("");
   const endRef = useRef(null);
+
+  useEffect(() => {
+    const normalizedTenantId = tenantId.trim();
+    const normalizedCustomerId = customerId.trim();
+    if (!normalizedTenantId || !normalizedCustomerId) return undefined;
+
+    const controller = new AbortController();
+    const timer = window.setTimeout(async () => {
+      setLoadingHistory(true);
+      setError("");
+      try {
+        const result = await fetchRecentMessages({
+          tenantId: normalizedTenantId,
+          customerId: normalizedCustomerId,
+          limit: 5,
+        });
+        if (!controller.signal.aborted) {
+          setMessages((result.messages || []).slice(-5));
+        }
+      } catch (err) {
+        if (!controller.signal.aborted) setError(String(err.message || err));
+      } finally {
+        if (!controller.signal.aborted) setLoadingHistory(false);
+      }
+    }, 300);
+    return () => {
+      controller.abort();
+      window.clearTimeout(timer);
+    };
+  }, [tenantId, customerId]);
 
   useEffect(() => {
     endRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -80,7 +111,10 @@ export default function ChatView({ tenantId, defaultCustomerId }) {
       </div>
 
       <div className="messages">
-        {messages.length === 0 && (
+        {loadingHistory && messages.length === 0 && (
+          <p className="muted center">Loading recent messages…</p>
+        )}
+        {!loadingHistory && messages.length === 0 && (
           <p className="muted center">
             Try: "I need a refund for my invoice" or "the app keeps crashing"
           </p>

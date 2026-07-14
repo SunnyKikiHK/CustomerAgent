@@ -127,6 +127,50 @@ class ConversationMemory:
         if await self._working_count(key) >= self.COMPRESS_AT:
             await self._compress(message.tenant_id, message.customer_id, message.session_id)
 
+    async def get_recent_messages(
+        self,
+        *,
+        tenant_id: str,
+        customer_id: str,
+        limit: int = 5,
+    ) -> list[ChatMessage]:
+        """Return the newest messages across this customer's active sessions."""
+        bounded_limit = max(1, min(limit, 5))
+        prefix = self._wm_key(tenant_id, customer_id, "")
+        client = self._client()
+        if client is not None:
+            keys = list(client.scan_iter(f"{prefix}*"))
+            stored = [
+                (key, raw)
+                for key in keys
+                for raw in client.lrange(key, 0, self.WORKING_MAX - 1)
+            ]
+        else:
+            stored = [
+                (key, raw)
+                for key, raws in self._memory_store.items()
+                if key.startswith(prefix)
+                for raw in raws[: self.WORKING_MAX]
+            ]
+
+        messages: list[ChatMessage] = []
+        for key, raw in stored:
+            data = json.loads(raw)
+            session_id = str(key).removeprefix(prefix)
+            messages.append(
+                ChatMessage(
+                    tenant_id=tenant_id,
+                    customer_id=customer_id,
+                    session_id=session_id,
+                    role=ChatMessageRole(data["role"]),
+                    content=data["content"],
+                    metadata=data.get("metadata", {}),
+                    created_at=datetime.fromisoformat(data["ts"]),
+                )
+            )
+        messages.sort(key=lambda message: message.created_at)
+        return messages[-bounded_limit:]
+
     async def get_context(
         self,
         *,

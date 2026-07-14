@@ -15,6 +15,17 @@ async function request(path, options = {}) {
   return res.json();
 }
 
+export function fetchRecentMessages({ tenantId, customerId, limit = 5 }) {
+  const params = new URLSearchParams({
+    tenant_id: tenantId,
+    customer_id: customerId,
+    limit: String(Math.min(limit, 5)),
+  });
+  return request(`/chat/messages?${params.toString()}`, {
+    headers: { "X-Tenant-Id": tenantId },
+  });
+}
+
 export async function streamChatTurn(
   { tenantId, customerId, sessionId, content },
   onEvent,
