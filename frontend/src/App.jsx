@@ -3,6 +3,7 @@ import ChatView from "./views/ChatView.jsx";
 import Dashboard from "./views/Dashboard.jsx";
 import Simulator from "./views/Simulator.jsx";
 import NpsResponse from "./views/NpsResponse.jsx";
+import Qbr from "./views/Qbr.jsx";
 
 // Demo tenant/customer seeded by scripts/seed_playbooks.py.
 const DEFAULT_TENANT = "11111111-1111-1111-1111-111111111111";
@@ -39,6 +40,9 @@ export default function App() {
         <button className={tab === "nps" ? "active" : ""} onClick={() => setTab("nps")}>
           NPS Response
         </button>
+        <button className={tab === "qbr" ? "active" : ""} onClick={() => setTab("qbr")}>
+          QBR
+        </button>
       </nav>
 
       <main className="main">
@@ -48,6 +52,7 @@ export default function App() {
         {tab === "dashboard" && <Dashboard tenantId={tenantId} />}
         {tab === "simulator" && <Simulator tenantId={tenantId} />}
         {tab === "nps" && <NpsResponse tenantId={tenantId} />}
+        {tab === "qbr" && <Qbr tenantId={tenantId} />}
       </main>
     </div>
   );

@@ -375,3 +375,29 @@ CREATE POLICY nps_surveys_isolation ON nps_surveys
     FOR ALL USING (tenant_id = current_setting('app.current_tenant_id', true)::UUID);
 CREATE POLICY nps_responses_isolation ON nps_responses
     FOR ALL USING (tenant_id = current_setting('app.current_tenant_id', true)::UUID);
+
+-- ── QBR: quarterly business review reports ──────────────────────────────────
+-- One generated report per tenant/period. Stores the deterministic metrics
+-- snapshot (so the report is reproducible) plus the generated narrative. Kept in
+-- sync with Alembic migration 0004_qbr_reports.
+CREATE TABLE IF NOT EXISTS qbr_reports (
+    id                UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    tenant_id         UUID         NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+    period_start      DATE         NOT NULL,
+    period_end        DATE         NOT NULL,
+    status            VARCHAR(20)  NOT NULL DEFAULT 'draft',  -- draft, approved, delivered, failed
+    metrics_snapshot  JSONB        NOT NULL DEFAULT '{}'::jsonb,
+    report_markdown   TEXT,
+    generated_at      TIMESTAMPTZ,
+    delivered_at      TIMESTAMPTZ,
+    recipient_email   VARCHAR(320),
+    workflow_id       VARCHAR(255),
+    error             TEXT,
+    created_at        TIMESTAMPTZ  NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS idx_qbr_reports_tenant ON qbr_reports(tenant_id, created_at DESC);
+
+ALTER TABLE qbr_reports ENABLE ROW LEVEL SECURITY;
+CREATE POLICY qbr_reports_isolation ON qbr_reports
+    FOR ALL USING (tenant_id = current_setting('app.current_tenant_id', true)::UUID);

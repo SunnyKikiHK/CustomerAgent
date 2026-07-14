@@ -20,6 +20,7 @@ class AgentRole(str, Enum):
     ``apps/agent_service/src/agent/subagents/__init__.py``):
 
     - Signal-only:       HEALTH_ANALYSIS, OUTREACH_DRAFT, NPS_OUTREACH
+    - Reporting:         QBR_REPORT (tenant-level, not customer-scoped)
     - Conversation-only: GENERAL, TECHNICAL, BILLING, ESCALATION
     - Shared:            PLAYBOOK_RETRIEVAL, COMPLIANCE_CRITIC
     """
@@ -28,6 +29,9 @@ class AgentRole(str, Enum):
     HEALTH_ANALYSIS = "health_analysis"
     OUTREACH_DRAFT = "outreach_draft"
     NPS_OUTREACH = "nps_outreach"
+
+    # Reporting (tenant-level, not customer-scoped)
+    QBR_REPORT = "qbr_report"
 
     # Conversation-only specialists (General/Technical/Billing routing)
     GENERAL = "general"

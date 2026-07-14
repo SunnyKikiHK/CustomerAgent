@@ -33,6 +33,16 @@ from packages.tool_system.src.tools.nps_tools import (
     execute_query_nps_history,
     execute_record_nps_response,
 )
+from packages.tool_system.src.tools.qbr_tools import (
+    QUERY_RENEWAL_PIPELINE_DEFINITION,
+    QUERY_SIGNAL_SUMMARY_DEFINITION,
+    QUERY_TENANT_NPS_DEFINITION,
+    QUERY_TENANT_PORTFOLIO_DEFINITION,
+    execute_query_renewal_pipeline,
+    execute_query_signal_summary,
+    execute_query_tenant_nps,
+    execute_query_tenant_portfolio,
+)
 
 ToolExecutor = Callable[..., Awaitable[Any]]
 
@@ -227,6 +237,38 @@ def register_builtin_tools() -> None:
         execute_calculate_tenant_nps,
         boundary=ToolBoundary.INTERNAL,
         tags=["read", "nps"],
+        overwrite=True,
+    )
+    register_tool(
+        "query_tenant_portfolio",
+        QUERY_TENANT_PORTFOLIO_DEFINITION,
+        execute_query_tenant_portfolio,
+        boundary=ToolBoundary.INTERNAL,
+        tags=["read", "qbr", "portfolio"],
+        overwrite=True,
+    )
+    register_tool(
+        "query_tenant_nps",
+        QUERY_TENANT_NPS_DEFINITION,
+        execute_query_tenant_nps,
+        boundary=ToolBoundary.INTERNAL,
+        tags=["read", "qbr", "nps"],
+        overwrite=True,
+    )
+    register_tool(
+        "query_renewal_pipeline",
+        QUERY_RENEWAL_PIPELINE_DEFINITION,
+        execute_query_renewal_pipeline,
+        boundary=ToolBoundary.INTERNAL,
+        tags=["read", "qbr", "renewal"],
+        overwrite=True,
+    )
+    register_tool(
+        "query_signal_summary",
+        QUERY_SIGNAL_SUMMARY_DEFINITION,
+        execute_query_signal_summary,
+        boundary=ToolBoundary.INTERNAL,
+        tags=["read", "qbr", "signals"],
         overwrite=True,
     )
 

@@ -161,3 +161,24 @@ export function submitNpsResponse(tenantId, surveyId, score, comment) {
     body: JSON.stringify({ tenant_id: tenantId, score, comment: comment || null }),
   });
 }
+
+// --- QBR -------------------------------------------------------------------
+// Generation and reads require a CSM JWT (write role for generate). Reads use
+// the same Bearer token cached by login().
+
+export function generateQbr(tenantId) {
+  return request("/qbr/generate", {
+    method: "POST",
+    headers: authHeaders(tenantId),
+  });
+}
+
+export function fetchQbrReports(tenantId) {
+  return request("/qbr/reports", { headers: authHeaders(tenantId) });
+}
+
+export function fetchQbrReport(tenantId, reportId) {
+  return request(`/qbr/reports/${encodeURIComponent(reportId)}`, {
+    headers: authHeaders(tenantId),
+  });
+}

@@ -30,8 +30,9 @@ from apps.agent_service.src.agent.subagents.health_analysis import HealthAnalysi
 from apps.agent_service.src.agent.subagents.nps_outreach import NpsOutreachAgent
 from apps.agent_service.src.agent.subagents.outreach_draft import OutreachDraftAgent
 from apps.agent_service.src.agent.subagents.playbook_retrieval import PlaybookRetrievalAgent
+from apps.agent_service.src.agent.subagents.qbr_report import QbrReportAgent
 
-Domain = Literal["signal", "conversation"]
+Domain = Literal["signal", "conversation", "reporting"]
 
 
 @lru_cache(maxsize=1)
@@ -58,6 +59,10 @@ def _signal_specialists() -> dict[AgentRole, type[ReActSubagent]]:
     }
 
 
+def _reporting_specialists() -> dict[AgentRole, type[ReActSubagent]]:
+    return {AgentRole.QBR_REPORT: QbrReportAgent}
+
+
 def _shared_specialists() -> dict[AgentRole, type[ReActSubagent]]:
     return {AgentRole.PLAYBOOK_RETRIEVAL: PlaybookRetrievalAgent}
 
@@ -69,7 +74,14 @@ def role_map_for_domain(domain: Domain | None) -> dict[AgentRole, type[ReActSuba
         return {**_signal_specialists(), **shared}
     if domain == "conversation":
         return {**_conversation_specialists(), **shared}
-    return {**_signal_specialists(), **_conversation_specialists(), **shared}
+    if domain == "reporting":
+        return {**_reporting_specialists(), **shared}
+    return {
+        **_signal_specialists(),
+        **_conversation_specialists(),
+        **_reporting_specialists(),
+        **shared,
+    }
 
 
 def build_subagent(
@@ -108,6 +120,7 @@ __all__ = [
     "HealthAnalysisAgent",
     "OutreachDraftAgent",
     "NpsOutreachAgent",
+    "QbrReportAgent",
     "PlaybookRetrievalAgent",
     "role_map_for_domain",
     "build_subagent",
