@@ -30,6 +30,7 @@ from apps.agent_service.src.agent.orchestrator.reducer import (
 )
 from apps.agent_service.src.agent.runtime.delegation import execute_tasks
 from apps.agent_service.src.agent.subagents.compliance_critic import run_compliance_critic
+from packages.observability.src.tracer import observe
 
 AgentInput = SignalAgentInput | ConversationAgentInput
 
@@ -124,24 +125,36 @@ class BaseOrchestrator(ABC):
         memory_excerpt = await self.load_memory_excerpt(agent_input, ctx, config)
         memory_context = await self.load_execution_memory_context(agent_input, ctx, config)
 
-        plan, planner_usage = await self.build_plan(
-            agent_input=agent_input,
-            ctx=ctx,
-            config=config,
-            tenant_constraints=tenant_constraints,
-            memory_excerpt=memory_excerpt,
-        )
+        _trace_attrs = {
+            "tenant_id": ctx.tenant_id,
+            "customer_id": self.customer_id(agent_input),
+            "trace_id": ctx.trace_id,
+            "signal_id": ctx.signal_id,
+            "domain": self.domain,
+        }
 
-        results = await execute_tasks(
-            plan=plan,
-            ctx=ctx,
-            config=config,
-            customer_id=self.customer_id(agent_input),
-            tenant_constraints=tenant_constraints,
-            memory_excerpt=memory_excerpt,
-            memory_context=memory_context,
-            domain=self.domain,
-        )
+        with observe("planner.build", attributes=_trace_attrs) as _span:
+            plan, planner_usage = await self.build_plan(
+                agent_input=agent_input,
+                ctx=ctx,
+                config=config,
+                tenant_constraints=tenant_constraints,
+                memory_excerpt=memory_excerpt,
+            )
+            _span.set("task_count", len(plan.tasks))
+
+        with observe("executor.delegate", attributes=_trace_attrs) as _span:
+            results = await execute_tasks(
+                plan=plan,
+                ctx=ctx,
+                config=config,
+                customer_id=self.customer_id(agent_input),
+                tenant_constraints=tenant_constraints,
+                memory_excerpt=memory_excerpt,
+                memory_context=memory_context,
+                domain=self.domain,
+            )
+            _span.set("result_count", len(results))
 
         proposed_external_writes = (
             extract_proposed_external_writes(results)
@@ -289,14 +302,25 @@ class BaseOrchestrator(ABC):
             )
             return review, LLMUsage()
 
-        return await run_compliance_critic(
-            agent_input=agent_input,
-            plan=plan,
-            results=results,
-            ctx=ctx,
-            config=config,
-            proposed_external_writes=proposed_external_writes,
-        )
+        with observe(
+            "compliance.review",
+            attributes={
+                "tenant_id": ctx.tenant_id,
+                "trace_id": ctx.trace_id,
+                "task_count": len(plan.tasks),
+                "proposed_writes": len(proposed_external_writes),
+            },
+        ) as span:
+            review, usage = await run_compliance_critic(
+                agent_input=agent_input,
+                plan=plan,
+                results=results,
+                ctx=ctx,
+                config=config,
+                proposed_external_writes=proposed_external_writes,
+            )
+            span.set("approved", review.approved)
+            return review, usage
 
 
 __all__ = [

@@ -8,6 +8,7 @@ from typing import Any
 from apps.agent_service.src.agent.llm_client import LLMClient, LLMMessage
 from apps.agent_service.src.agent.runtime.prompts import build_system_prompt, collect_tool_docs
 from apps.agent_service.src.agent.runtime.tool_caller import dispatch_tool_call
+from packages.observability.src.tracer import observe
 from packages.agent.src.config import AgentConfig
 from packages.agent.src.subagent_types import SubagentContextPacket, SubagentResult, ToolCallRecord
 from packages.agent.src.types import LLMUsage, SessionContext
@@ -165,12 +166,22 @@ class ReActLoop:
             return
 
         params = {**original_params, "tenant_id": self.ctx.tenant_id}
-        try:
-            result = await dispatch_tool_call(tool_name, params, self.ctx)
-            success = True
-        except Exception as exc:
-            result = {"error": str(exc)}
-            success = False
+        with observe(
+            f"tool.{tool_name}",
+            attributes={
+                "tool": tool_name,
+                "role": task.role.value,
+                "tenant_id": self.ctx.tenant_id,
+                "trace_id": self.ctx.trace_id,
+            },
+        ) as span:
+            try:
+                result = await dispatch_tool_call(tool_name, params, self.ctx)
+                success = True
+            except Exception as exc:
+                result = {"error": str(exc)}
+                success = False
+            span.set("success", success)
 
         self.messages.append(LLMMessage(role="tool", content=json.dumps(result, default=str)))
         self.tool_calls.append(

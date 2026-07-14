@@ -264,8 +264,21 @@ async def run_conversation_agent(
     ctx: SessionContext,
 ) -> AgentResponse:
     """Entry point for a conversation orchestrator run."""
+    from packages.observability.src.tracer import observe
+
     orchestrator = ConversationOrchestrator()
-    return await orchestrator.run(agent_input, ctx)
+    with observe(
+        "conversation.run",
+        attributes={
+            "tenant_id": agent_input.tenant_id,
+            "customer_id": agent_input.customer_id,
+            "session_id": agent_input.session_id,
+            "trace_id": ctx.trace_id,
+        },
+    ) as span:
+        response = await orchestrator.run(agent_input, ctx)
+        span.set("approved", getattr(response, "approved", None))
+        return response
 
 
 __all__ = ["ConversationOrchestrator", "run_conversation_agent"]

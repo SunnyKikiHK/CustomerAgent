@@ -17,6 +17,7 @@ from apps.agent_service.src.agent.runtime.tool_dispatch import execute_mcp_actio
 from apps.agent_service.src.agent.signal.signal_planner import build_signal_plan
 from apps.tool_gateway.src.approval import persist_action_approval
 from packages.agent.src.models import planner_model, worker_model
+from packages.observability.src.tracer import observe
 
 
 class SignalOrchestrator(BaseOrchestrator):
@@ -172,8 +173,18 @@ def _stable_digest(value: dict[str, Any]) -> str:
 
 
 async def run_signal_agent(agent_input: SignalAgentInput, ctx: SessionContext) -> Any:
-    """Entry point used by the RQ worker."""
-    return await SignalOrchestrator().run(agent_input, ctx)
+    """Entry point used by the Temporal signal-processing activity."""
+    with observe(
+        "signal.process",
+        attributes={
+            "tenant_id": ctx.tenant_id,
+            "customer_id": agent_input.customer_id,
+            "signal_type": agent_input.signal.type,
+            "signal_id": ctx.signal_id,
+            "trace_id": ctx.trace_id,
+        },
+    ):
+        return await SignalOrchestrator().run(agent_input, ctx)
 
 
 __all__ = ["SignalOrchestrator", "run_signal_agent"]
