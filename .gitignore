@@ -23,6 +23,7 @@ env/
 *.pem
 *.key
 secrets/
+config.sh
 
 # IDE
 .idea/

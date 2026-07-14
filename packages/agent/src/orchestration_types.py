@@ -119,6 +119,7 @@ class FinalDecision(BaseModel):
     action: str
     response_text: str
     approved_external_writes: list[dict[str, Any]] = Field(default_factory=list)
+    external_action_results: list[dict[str, Any]] = Field(default_factory=list)
     subagent_results: list[SubagentResult] = Field(default_factory=list)
     compliance_review: ComplianceReview
     reasoning_summary: str

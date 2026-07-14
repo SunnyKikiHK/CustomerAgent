@@ -36,8 +36,10 @@ def plan_requires_critic(plan: OrchestratorPlan) -> bool:
 
 _WRITE_OR_VISIBLE_ROLES = {
     AgentRole.OUTREACH_DRAFT,
-    AgentRole.CUSTOMER_CHAT,
-    AgentRole.ACTION_EXECUTION,
+    AgentRole.GENERAL,
+    AgentRole.TECHNICAL,
+    AgentRole.BILLING,
+    AgentRole.ESCALATION,
 }
 
 

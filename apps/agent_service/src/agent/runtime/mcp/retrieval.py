@@ -12,6 +12,7 @@ from packages.observability.src.tracer import trace_event
 
 from apps.agent_service.src.agent.llm_client import LLMClient, LLMMessage
 from apps.agent_service.src.agent.runtime.mcp.tool_layer import ToolCallResult, get_mcp_tool_layer
+from packages.agent.src.models import worker_model
 from packages.agent.src.types import SessionContext
 
 
@@ -19,10 +20,11 @@ async def rewrite_query(
     query: str,
     *,
     llm_client: LLMClient | None = None,
-    model: str = "deepseek/deepseek-v4-flash",
+    model: str | None = None,
     n: int = 3,
 ) -> list[str]:
     """Expand a query into multiple search angles."""
+    model = model or worker_model()
     client = llm_client or LLMClient(default_model=model)
     prompt = (
         f"You are a search query optimizer for a retrieval system.\n"
@@ -62,12 +64,13 @@ async def rerank_candidates(
     *,
     top_k: int,
     llm_client: LLMClient | None = None,
-    model: str = "deepseek/deepseek-v4-flash",
+    model: str | None = None,
 ) -> list[dict[str, Any]]:
     """Score merged candidates and return the top-K."""
     if len(items) <= top_k:
         return items
 
+    model = model or worker_model()
     client = llm_client or LLMClient(default_model=model)
     items_text = "\n".join(
         f"{index}. {json.dumps(item, default=str)[:200]}"
@@ -102,9 +105,10 @@ async def retrieve_with_optimization(
     params: dict[str, Any] | None = None,
     top_k: int = 5,
     llm_client: LLMClient | None = None,
-    model: str = "deepseek/deepseek-v4-flash",
+    model: str | None = None,
 ) -> ToolCallResult:
     """Run rewrite -> parallel recall -> merge/dedupe -> rerank -> fallback."""
+    model = model or worker_model()
     layer = get_mcp_tool_layer()
     # step 1: expand one query into multiple retrieval angles
     sub_queries = await rewrite_query(query, llm_client=llm_client, model=model, n=3)
@@ -139,13 +143,16 @@ async def retrieve_with_optimization(
             merged.append(item)
 
     if not merged:
-        kb_matches = await retrieve_documents(
-            tenant_id=ctx.tenant_id,
-            query=query,
-            collection="playbooks",
-            limit=top_k,
-        )
-        merged.extend(item for item in kb_matches if isinstance(item, dict))
+        try:
+            kb_matches = await retrieve_documents(
+                tenant_id=ctx.tenant_id,
+                query=query,
+                collection="playbooks",
+                limit=top_k,
+            )
+            merged.extend(item for item in kb_matches if isinstance(item, dict))
+        except Exception:
+            kb_matches = []
 
     if not merged:
         return ToolCallResult(

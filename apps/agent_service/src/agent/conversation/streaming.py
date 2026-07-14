@@ -23,7 +23,16 @@ async def stream_approved_response(
     if not response.approved:
         yield _sse(
             "error",
-            {"approved": False, "message": response.feedback or "Response blocked by critic"},
+            {
+                "approved": False,
+                "message": response.text,
+                "feedback": response.feedback,
+                "action": (
+                    response.final_decision.action
+                    if response.final_decision is not None
+                    else "blocked"
+                ),
+            },
         )
         return
 

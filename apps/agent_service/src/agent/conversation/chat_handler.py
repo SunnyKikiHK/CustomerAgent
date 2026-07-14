@@ -35,7 +35,14 @@ async def handle_chat_turn(request: ChatRequest, ctx: SessionContext):
         ),
         approved=response.approved,
         trace_id=ctx.trace_id,
-        metadata={"feedback": response.feedback},
+        metadata={
+            "feedback": response.feedback,
+            "action": (
+                response.final_decision.action
+                if response.final_decision is not None
+                else None
+            ),
+        },
     )
 
 

@@ -17,6 +17,29 @@ from packages.agent.src.orchestration_types import (
 from packages.agent.src.subagent_types import SubagentResult
 from packages.agent.src.types import LLMUsage, SessionContext
 
+from apps.agent_service.src.agent.runtime.skills import get_skill_manager
+
+#: Skill role that owns the reviewer persona (skills/<tenant>/compliance_critic/).
+_COMPLIANCE_CRITIC_ROLE = "compliance_critic"
+
+#: Code-owned fallback persona, used only when no compliance_critic SKILL.md is
+#: available (for example when the tenant skills dir is missing offline).
+COMPLIANCE_CRITIC_BRIEF = (
+    "You are ComplianceCriticAgent, the Reflector phase. Review aggregated "
+    "subagent outputs before any external write, state mutation, or customer-visible "
+    "output. Validate tenant isolation, PII leakage, security, business policy, "
+    "factual support, and tone. Return only JSON matching the provided schema."
+)
+
+
+def _critic_persona(tenant_id: str) -> str:
+    """Load the reviewer persona from the tenant skills dir, with a code fallback."""
+    try:
+        persona = get_skill_manager(tenant_id).persona_for(_COMPLIANCE_CRITIC_ROLE)
+    except Exception:
+        persona = ""
+    return persona or COMPLIANCE_CRITIC_BRIEF
+
 
 async def run_compliance_critic(
     *,
@@ -40,15 +63,7 @@ async def run_compliance_critic(
         "schema": ComplianceReview.model_json_schema(),
     }
     messages = [
-        LLMMessage(
-            role="system",
-            content=(
-                "You are ComplianceCriticAgent, the Reflector phase. Review aggregated "
-                "subagent outputs before any external write, state mutation, or customer-visible "
-                "output. Validate tenant isolation, PII leakage, security, business policy, "
-                "factual support, and tone. Return only JSON matching the provided schema."
-            ),
-        ),
+        LLMMessage(role="system", content=_critic_persona(ctx.tenant_id)),
         LLMMessage(role="user", content=json.dumps(payload, default=str)),
     ]
 
@@ -98,4 +113,4 @@ def _parse_review(text: str, results: list[SubagentResult]) -> ComplianceReview:
         )
 
 
-__all__ = ["run_compliance_critic"]
+__all__ = ["run_compliance_critic", "COMPLIANCE_CRITIC_BRIEF"]

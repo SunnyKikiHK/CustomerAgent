@@ -59,6 +59,19 @@ class CustomerSignal(BaseModel):
                 f"Renewal in {self.payload.get('days', '?')} days, "
                 f"health score {self.payload.get('health_score')}"
             ),
+            "renewal_risk": (
+                f"Renewal in {self.payload.get('days_to_renewal', '?')} days "
+                f"(renewal_date {self.payload.get('renewal_date', '?')}), "
+                f"health score {self.payload.get('health_score', '?')}"
+            ),
+            "low_health": (
+                f"Health score dropped to {self.payload.get('health_score', '?')} "
+                f"(threshold {self.payload.get('threshold', '?')})"
+            ),
+            "negative_sentiment": (
+                "Negative customer sentiment detected in conversation: "
+                f"{self.payload.get('reason', self.payload.get('message', ''))}"
+            ),
             "support_ticket": f"New support ticket: {self.payload.get('subject', '')}",
         }
         return type_labels.get(self.type, str(self.payload))

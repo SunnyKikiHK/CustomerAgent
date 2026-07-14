@@ -11,7 +11,9 @@ from packages.agent.src.types import SessionContext
 
 from apps.agent_service.src.agent.conversation.chat_handler import handle_chat_turn
 
-router = APIRouter(prefix="/chat", tags=["chat"])
+# NOTE: full paths are set on each route rather than via APIRouter(prefix=...):
+# the installed Starlette drops prefixed sub-routes on include_router.
+router = APIRouter(tags=["chat"])
 
 
 class ChatTurnRequest(BaseModel):
@@ -25,7 +27,7 @@ class ChatTurnRequest(BaseModel):
     metadata: dict = Field(default_factory=dict)
 
 
-@router.post("/turn")
+@router.post("/chat/turn")
 async def chat_turn(
     body: ChatTurnRequest,
     x_tenant_id: str | None = Header(default=None, alias="X-Tenant-Id"),

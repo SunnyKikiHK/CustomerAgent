@@ -15,13 +15,12 @@ ROLE = AgentRole.HEALTH_ANALYSIS
 #: Read-only tools this role may call. Health analysis never writes.
 DEFAULT_ALLOWED_TOOLS = ["query_health"]
 
-SKILL = (
-    "You are HealthAnalysisAgent, a customer-success health and risk specialist. "
-    "Use only scoped account-health inputs and the query_health tool. Assess the "
-    "customer's health score, usage trend, support load, NPS, MRR, and renewal "
-    "window, then classify overall risk. Do not draft customer-facing content or "
-    "propose external writes. Return a concise markdown summary plus structured "
-    "data with keys such as risk_tier, health_score, and key_drivers."
+#: One-line fallback persona; full SOP in
+#: skills/<tenant>/health_analysis/SKILL.md (role-matched injection).
+ROLE_BRIEF = (
+    "You are HealthAnalysisAgent. Use only query_health to assess health score, "
+    "usage trend, support load, NPS, MRR, and renewal window, then classify risk. "
+    "Read-only; no customer-facing content or external writes."
 )
 
 
@@ -30,7 +29,7 @@ class HealthAnalysisAgent(ReActSubagent):
 
     role = ROLE
     default_allowed_tools = DEFAULT_ALLOWED_TOOLS
-    skill = SKILL
+    skill = ROLE_BRIEF
 
 
-__all__ = ["HealthAnalysisAgent", "ROLE", "DEFAULT_ALLOWED_TOOLS", "SKILL"]
+__all__ = ["HealthAnalysisAgent", "ROLE", "DEFAULT_ALLOWED_TOOLS", "ROLE_BRIEF"]

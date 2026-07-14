@@ -13,6 +13,7 @@ from typing import Any, cast
 from openai import AsyncOpenAI
 from pydantic import BaseModel, ConfigDict, Field
 
+from packages.agent.src.models import worker_model
 from packages.agent.src.types import LLMUsage
 
 
@@ -46,9 +47,17 @@ class LLMClient:
         default_model: str | None = None,
         langfuse_client: Any | None = None,
     ) -> None:
-        self._client = AsyncOpenAI(api_key=api_key or os.getenv("OPENROUTER_API_KEY"),
-            base_url=os.getenv("OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1"))
-        self.default_model = default_model or os.getenv("OPENROUTER_MODEL", "deepseek/deepseek-v4-flash")
+        # A key is required to instantiate the SDK. Fall back to a placeholder so
+        # construction never crashes offline; real calls then fail fast and the
+        # orchestrator degrades gracefully (delegation catches the error).
+        resolved_key = api_key or os.getenv("OPENROUTER_API_KEY") or "missing"
+        self._client = AsyncOpenAI(
+            api_key=resolved_key,
+            base_url=os.getenv("OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1"),
+            timeout=float(os.getenv("LLM_TIMEOUT_SECONDS", "30")),
+            max_retries=int(os.getenv("LLM_MAX_RETRIES", "1")),
+        )
+        self.default_model = default_model or worker_model()
         self._langfuse = langfuse_client or self._build_langfuse_client()
 
     async def complete(

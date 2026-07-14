@@ -14,14 +14,29 @@ from pydantic import BaseModel, ConfigDict, Field
 
 
 class AgentRole(str, Enum):
-    """Supported specialist roles in the orchestrator/subagent runtime."""
+    """Supported specialist roles in the orchestrator/subagent runtime.
 
+    Roles are partitioned by domain (enforced by the domain-aware factory in
+    ``apps/agent_service/src/agent/subagents/__init__.py``):
+
+    - Signal-only:       HEALTH_ANALYSIS, OUTREACH_DRAFT
+    - Conversation-only: GENERAL, TECHNICAL, BILLING, ESCALATION
+    - Shared:            PLAYBOOK_RETRIEVAL, COMPLIANCE_CRITIC
+    """
+
+    # Signal-only specialists
     HEALTH_ANALYSIS = "health_analysis"
-    PLAYBOOK_RETRIEVAL = "playbook_retrieval"
     OUTREACH_DRAFT = "outreach_draft"
-    CUSTOMER_CHAT = "customer_chat"
+
+    # Conversation-only specialists (General/Technical/Billing routing)
+    GENERAL = "general"
+    TECHNICAL = "technical"
+    BILLING = "billing"
+    ESCALATION = "escalation"
+
+    # Shared across both systems
+    PLAYBOOK_RETRIEVAL = "playbook_retrieval"
     COMPLIANCE_CRITIC = "compliance_critic"
-    ACTION_EXECUTION = "action_execution"
 
 
 class SubagentTask(BaseModel):

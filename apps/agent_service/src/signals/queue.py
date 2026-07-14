@@ -98,4 +98,25 @@ def get_signal_queue() -> SignalQueue:
     return _QUEUE
 
 
-__all__ = ["SignalQueue", "get_signal_queue"]
+async def enqueue_signal(payload: dict[str, Any]) -> str:
+    """Enqueue a signal and record it in the durable `signals` table.
+
+    Returns the signal id when newly enqueued, or "" when it was a duplicate.
+    Recording is best-effort (skipped when the DB is unavailable).
+    """
+    from apps.agent_service.src.signals.normalizer import normalize_signal_payload
+    from apps.agent_service.src.signals.records import record_signal
+
+    signal_id = get_signal_queue().enqueue(payload)
+    if signal_id:
+        signal = normalize_signal_payload(payload)
+        await record_signal(
+            signal,
+            source=str(payload.get("source", "manual")),
+            severity=str(payload.get("severity", "normal")),
+            status="queued",
+        )
+    return signal_id
+
+
+__all__ = ["SignalQueue", "get_signal_queue", "enqueue_signal"]

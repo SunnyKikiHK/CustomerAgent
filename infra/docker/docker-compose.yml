@@ -1,4 +1,73 @@
 services:
+  tool-gateway:
+    build:
+      context: ../..
+      dockerfile: apps/tool_gateway/Dockerfile # dockfile's working directory based on context to build image
+    image: customer-agent/tool-gateway:local 
+    container_name: agent_tool_gateway
+    environment:
+      MCP_TOOL_GATEWAY_TOKEN: "${MCP_TOOL_GATEWAY_TOKEN:-}"
+      MCP_GATEWAY_HOST: 0.0.0.0
+      MCP_GATEWAY_PORT: "8002"
+    ports:
+      - "8002:8002"
+    networks:
+      - postgres_network
+    restart: unless-stopped
+
+  api-gateway:
+    build:
+      context: ../..
+      dockerfile: apps/api_gateway/Dockerfile
+    image: customer-agent/api-gateway:local
+    container_name: agent_api_gateway
+    environment:
+      DATABASE_URL: postgresql://sunny:sunny@postgres:5432/agent
+      REDIS_URL: redis://redis:6379/0
+      MCP_TOOL_GATEWAY_URL: http://tool-gateway:8002/mcp
+      MCP_TOOL_GATEWAY_TOKEN: "${MCP_TOOL_GATEWAY_TOKEN:-}"
+      # LLM + embeddings: passed through from the host env / .env. When empty,
+      # the app degrades to deterministic local embeddings.
+      OPENROUTER_API_KEY: "${OPENROUTER_API_KEY:-}"
+      OPENROUTER_BASE_URL: "${OPENROUTER_BASE_URL:-https://openrouter.ai/api/v1}"
+      OPENROUTER_MODEL: "${OPENROUTER_MODEL:-deepseek/deepseek-v4-flash}"
+      EMBEDDING_MODEL: "${EMBEDDING_MODEL:-qwen/qwen3-embedding-8b}"
+      CORS_ALLOW_ORIGINS: "*"
+    ports:
+      - "8000:8000"
+    networks:
+      - postgres_network
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+
+  agent-worker:
+    build:
+      context: ../..
+      dockerfile: apps/agent_service/Dockerfile
+    image: customer-agent/agent-worker:local
+    container_name: agent_worker
+    environment:
+      DATABASE_URL: postgresql://sunny:sunny@postgres:5432/agent
+      REDIS_URL: redis://redis:6379/0
+      MCP_TOOL_GATEWAY_URL: http://tool-gateway:8002/mcp
+      MCP_TOOL_GATEWAY_TOKEN: "${MCP_TOOL_GATEWAY_TOKEN:-}"
+      OPENROUTER_API_KEY: "${OPENROUTER_API_KEY:-}"
+      OPENROUTER_BASE_URL: "${OPENROUTER_BASE_URL:-https://openrouter.ai/api/v1}"
+      OPENROUTER_MODEL: "${OPENROUTER_MODEL:-deepseek/deepseek-v4-flash}"
+      EMBEDDING_MODEL: "${EMBEDDING_MODEL:-qwen/qwen3-embedding-8b}"
+    networks:
+      - postgres_network
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+
   postgres:
     image: pgvector/pgvector:pg14
     container_name: agent_postgres

@@ -54,6 +54,15 @@ def select_dependency_results(
 
 PROFILE_ROLES = {AgentRole.HEALTH_ANALYSIS, AgentRole.OUTREACH_DRAFT}
 
+#: Conversation specialists that answer the customer and therefore receive the
+#: full fused three-tier memory (not just the profile slice).
+CONVERSATION_ROLES = {
+    AgentRole.GENERAL,
+    AgentRole.TECHNICAL,
+    AgentRole.BILLING,
+    AgentRole.ESCALATION,
+}
+
 
 def fuse_memory_excerpt(
     *,
@@ -66,7 +75,7 @@ def fuse_memory_excerpt(
         return None
     if task_role in PROFILE_ROLES:
         return memory_context.profile_excerpt(max_chars=min(budget_chars, 1200))
-    if task_role == AgentRole.CUSTOMER_CHAT:
+    if task_role in CONVERSATION_ROLES:
         return memory_context.to_prompt_text(max_chars=budget_chars)
     return None
 
@@ -76,4 +85,5 @@ __all__ = [
     "select_dependency_results",
     "fuse_memory_excerpt",
     "PROFILE_ROLES",
+    "CONVERSATION_ROLES",
 ]

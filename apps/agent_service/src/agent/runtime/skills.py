@@ -86,6 +86,40 @@ class SkillManager:
         """Hot-reload skills without restarting the process."""
         return self.load()
 
+    def summary(self) -> dict[str, Any]:
+        """Return a serializable overview of loaded skills for the API."""
+        return {
+            "root_dir": str(self.root_dir),
+            "count": len(self._skills),
+            "skills": [
+                {
+                    "name": skill.name,
+                    "description": skill.description,
+                    "keywords": skill.keywords,
+                    "agents": skill.agents,
+                    "enabled": skill.enabled,
+                    "path": skill.path,
+                }
+                for skill in self._skills
+            ],
+            "errors": self._errors,
+        }
+
+    def persona_for(self, agent_role: str) -> str:
+        """Return the role's persona body, ignoring keyword matching.
+
+        Used for always-on, message-independent personas (for example the
+        compliance critic). Returns the raw skill body of the first enabled
+        skill whose ``agents`` includes the role, or "" if none is found.
+        """
+        role = agent_role.lower()
+        for skill in self._skills:
+            if not skill.enabled:
+                continue
+            if role in skill.agents:
+                return skill.content.strip()
+        return ""
+
     def prompt_for(self, message: str, agent_role: str | None = None) -> str:
         """Build the injected skill block for a subagent prompt."""
         blocks: list[str] = []

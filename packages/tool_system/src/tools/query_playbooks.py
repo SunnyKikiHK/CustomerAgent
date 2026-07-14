@@ -1,10 +1,12 @@
-"""Playbook retrieval tool schema and Phase 1 in-process executor."""
+"""Playbook retrieval tool schema and DB-backed executor."""
 
 from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
 from pydantic import BaseModel, ConfigDict, Field
+
+from packages.knowledge_service.src.retrieve import retrieve_documents
 
 if TYPE_CHECKING:
     from packages.agent.src.types import SessionContext
@@ -61,15 +63,37 @@ async def execute_query_playbooks(
     params: QueryPlaybooksInput | dict[str, Any],
     ctx: "SessionContext" | None = None,
 ) -> QueryPlaybooksOutput:
-    """Return no matches until vector/DB-backed retrieval is wired."""
+    """Return tenant-scoped playbooks from knowledge retrieval."""
     parsed = params if isinstance(params, QueryPlaybooksInput) else QueryPlaybooksInput.model_validate(params)
     if ctx is not None and parsed.tenant_id != ctx.tenant_id:
         return QueryPlaybooksOutput(error="tenant_id does not match session context")
 
-    return QueryPlaybooksOutput(
-        matches=[],
-        error="query_playbooks Phase 1 executor is not connected to knowledge retrieval yet",
+    metadata_filter = {
+        key: value
+        for key, value in {
+            "customer_id": parsed.customer_id,
+            "signal_type": parsed.signal_type,
+        }.items()
+        if value is not None
+    }
+    docs = await retrieve_documents(
+        tenant_id=parsed.tenant_id,
+        query=parsed.query,
+        collection="playbooks",
+        limit=parsed.limit,
+        metadata_filter=metadata_filter,
     )
+    matches = [
+        PlaybookMatch(
+            id=str(doc.get("id", "")),
+            title=str(doc.get("metadata", {}).get("title") or doc.get("source_doc") or "Playbook"),
+            summary=str(doc.get("text") or doc.get("content") or ""),
+            score=float(doc["score"]) if doc.get("score") is not None else None,
+            metadata=dict(doc.get("metadata") or {}),
+        )
+        for doc in docs
+    ]
+    return QueryPlaybooksOutput(matches=matches)
 
 
 __all__ = [

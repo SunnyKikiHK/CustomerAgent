@@ -31,6 +31,7 @@ async def execute_tasks(
     tenant_constraints: list[str],
     memory_excerpt: str | None,
     memory_context: MemoryContext | None = None,
+    domain: str | None = None,
 ) -> list[SubagentResult]:
     """Execute ready subagent tasks in dependency-aware batches."""
     # fail fast if the plan itself is malformed before running anything
@@ -65,6 +66,7 @@ async def execute_tasks(
                     tenant_constraints=tenant_constraints,
                     memory_excerpt=memory_excerpt,
                     memory_context=memory_context,
+                    domain=domain,
                 )
                 for task in ready
             ),
@@ -104,6 +106,7 @@ async def _run_subagent(
     tenant_constraints: list[str],
     memory_excerpt: str | None,
     memory_context: MemoryContext | None = None,
+    domain: str | None = None,
 ) -> SubagentResult:
     monitor = get_performance_monitor()
     penalty = monitor.get_routing_penalty(task.role.value)
@@ -130,7 +133,7 @@ async def _run_subagent(
         memory_excerpt=role_memory or memory_excerpt,
         dependency_results=dependency_results,
     )
-    subagent = build_subagent(packet=packet, ctx=ctx, config=config)
+    subagent = build_subagent(packet=packet, ctx=ctx, config=config, domain=domain)
     result = await subagent.run()
     monitor.record_role_result(
         task.role.value,

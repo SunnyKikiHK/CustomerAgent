@@ -12,17 +12,15 @@ from packages.agent.src.subagent_types import AgentRole
 
 ROLE = AgentRole.OUTREACH_DRAFT
 
-#: Outreach may propose writes, but release is gated by the compliance critic.
-DEFAULT_ALLOWED_TOOLS = ["send_email", "send_slack"]
+#: Drafting proposes structured writes; only the post-compliance release hook executes them.
+DEFAULT_ALLOWED_TOOLS: list[str] = []
 
-SKILL = (
-    "You are OutreachDraftAgent, a customer-facing outreach specialist. Draft "
-    "safe, personalized, factually grounded outreach using prior subagent "
-    "markdown as evidence. Every customer-visible claim must be supported by "
-    "provided context. Do not invent data, do not include raw PII beyond the "
-    "approved recipient, and do not send anything directly: emit proposed "
-    "external writes as structured payloads for compliance review. Return a "
-    "markdown draft plus structured data under proposed_external_writes."
+#: One-line fallback persona; full SOP in
+#: skills/<tenant>/outreach_drafting/SKILL.md (role-matched injection).
+ROLE_BRIEF = (
+    "You are OutreachDraftAgent. Draft safe, grounded, personalized outreach from "
+    "prior subagent evidence; every claim must be supported. Do not send — emit "
+    "proposed_external_writes for compliance review."
 )
 
 
@@ -31,7 +29,7 @@ class OutreachDraftAgent(ReActSubagent):
 
     role = ROLE
     default_allowed_tools = DEFAULT_ALLOWED_TOOLS
-    skill = SKILL
+    skill = ROLE_BRIEF
 
 
-__all__ = ["OutreachDraftAgent", "ROLE", "DEFAULT_ALLOWED_TOOLS", "SKILL"]
+__all__ = ["OutreachDraftAgent", "ROLE", "DEFAULT_ALLOWED_TOOLS", "ROLE_BRIEF"]

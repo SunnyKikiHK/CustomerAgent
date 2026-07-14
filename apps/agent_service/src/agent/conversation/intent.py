@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Any
 
+from packages.agent.src.models import worker_model
 from packages.knowledge_service.src.embed import local_embedding
 
 from apps.agent_service.src.agent.llm_client import LLMClient, LLMMessage
@@ -76,12 +77,12 @@ class IntentRecognizer:
         self,
         *,
         llm_client: LLMClient | None = None,
-        model: str = "deepseek/deepseek-v4-flash",
+        model: str | None = None,
         confidence_threshold: float = 0.5,
         embedding_enabled: bool = True,
     ) -> None:
-        self.llm_client = llm_client or LLMClient(default_model=model)
-        self.model = model
+        self.model = model or worker_model()
+        self.llm_client = llm_client or LLMClient(default_model=self.model)
         self.threshold = confidence_threshold
         self.embedding_enabled = embedding_enabled
         self._template_embeddings: dict[IntentCategory, list[list[float]]] = {}
@@ -139,13 +140,35 @@ class IntentRecognizer:
                 f"  {item.get('role', 'user')}: {item.get('content', '')}"
                 for item in history[-3:]
             )
-        prompt = (
-            "Classify the customer message intent. Return JSON only.\n"
-            f"Examples:\n{examples}\n"
-            f"History:\n{history_text}\n"
-            f'Message: "{message}"\n'
-            f'Format: {{"intent": "<intent>", "confidence": 0.0, "reasoning": "..."}}'
-        )
+        prompt = f"""Classify the customer's primary current intent using the message and recent history.
+
+        Return only valid JSON:
+        {{"intent": "<allowed_intent>", "confidence": <0.0-1.0>, "reasoning": "<brief reason>"}}
+
+        Allowed intents:
+        - greeting: salutation only.
+        - query: general informational question.
+        - request: non-specialized action or change request.
+        - technical: errors, broken behavior, login/authentication failures, APIs, or troubleshooting.
+        - billing: charges, refunds, invoices, subscriptions, payments, or fee disputes.
+        - account: profile, access, password, ownership, or account-management request without a product failure.
+        - complaint: dissatisfaction without an explicit handoff request.
+        - escalation: asks for a human/manager or reports an urgent, legal, safety, or critical issue.
+        - feedback: praise, rating, or suggestion without a support issue.
+        - other: no reliable match.
+
+        Rules: return exactly one lower-case allowed intent. Prefer escalation over all other intents; billing over request; and technical over account for a broken login or product failure. Use history only to resolve context. For multi-topic messages, choose the primary intent; downstream planning handles other domains.
+
+        Examples:
+        {examples}
+
+        Recent history:
+        {history_text}
+
+        Message:
+        "{message}"
+
+        JSON:"""
         try:
             response = await self.llm_client.complete(
                 [LLMMessage(role="user", content=prompt)],
@@ -224,30 +247,94 @@ class IntentRecognizer:
         return best if scores[best] >= self.threshold else IntentCategory.OTHER
 
     async def _extract_entities(self, message: str) -> dict[str, list[str]]:
-        prompt = (
-            'Extract entities from the customer message as JSON lists: '
-            '{"order_id":[],"product":[],"date":[],"amount":[],"error_code":[]}\n'
-            f'Message: "{message}"'
-        )
+        """Extract transactional entities plus durable customer-success signals.
+
+        Alongside the transactional entities (order_id/product/date/amount/
+        error_code), this pulls the profile-shaping signals the customer_profiles
+        row cares about 鈥?``preferences``, ``risk_signals``, ``sentiment_signals``
+        鈥?so a single chat turn immediately surfaces them (the memory profiler
+        still distills them over the wider conversation separately). Example:
+            {"order_id": [], "product": [], "date": [], "amount": [],
+             "error_code": [],
+             "preferences": ["fast responses", "clear next steps"],
+             "risk_signals": ["considering not renewing"],
+             "sentiment_signals": ["frustrated", "urgent"]}
+        """
+        prompt = f"""You are a high-precision Customer Data Extraction Engine.
+        Analyze the target customer message and extract key behavioral signals into the exact structured schema requested.
+
+        [CRITICAL OUTPUT RULES]
+        1. Return RAW JSON ONLY. Do NOT wrap your response in markdown code blocks (do not use ```json).
+        2. Do NOT include introductory phrases, conversational fillers, or explanations. 
+        3. Every single key listed below MUST be present in your output dictionary. If no relevant data is found for a field, map it to an empty list [].
+        4. Keep strings within lists short, clear, and written in English.
+
+        [REQUIRED OUTPUT SCHEMA]
+        {{
+        "order_id": [],
+        "product": [],
+        "date": [],
+        "amount": [],
+        "error_code": [],
+        "preferences": [],
+        "risk_signals": [],
+        "sentiment_signals": []
+        }}
+
+        [FIELD CHARACTERISTICS]
+        - order_id / product / date / amount / error_code: Concrete transactional entities explicitly named in the text.
+        - preferences: Explicit desires, workflows, or expectations the customer values (e.g., "fast responses", "clear next steps").
+        - risk_signals: Cues pointing to attrition, financial loss, or escalation churn risk (e.g., "considering not renewing", "repeated delay complaints").
+        - sentiment_signals: Descriptive indicators of the user's emotional state (e.g., "frustrated", "urgent", "confused").
+
+        [TARGET DATA]
+        Message: "{message}"
+
+        JSON Output:"""
         try:
             response = await self.llm_client.complete(
                 [LLMMessage(role="user", content=prompt)],
                 model=self.model,
                 temperature=0.0,
-                max_tokens=256,
+                max_tokens=320,
                 name="conversation.intent.entities",
             )
             raw = response.text
             start, end = raw.find("{"), raw.rfind("}") + 1
-            return json.loads(raw[start:end])
+            parsed = json.loads(raw[start:end])
+            return self._normalize_entities(parsed)
         except Exception:
-            return {
-                "order_id": [],
-                "product": [],
-                "date": [],
-                "amount": [],
-                "error_code": [],
-            }
+            return self._empty_entities()
+
+    #: Keys always present in the extraction result.
+    _ENTITY_KEYS = (
+        "order_id",
+        "product",
+        "date",
+        "amount",
+        "error_code",
+        "preferences",
+        "risk_signals",
+        "sentiment_signals",
+    )
+
+    @classmethod
+    def _empty_entities(cls) -> dict[str, list[str]]:
+        return {key: [] for key in cls._ENTITY_KEYS}
+
+    @classmethod
+    def _normalize_entities(cls, parsed: Any) -> dict[str, list[str]]:
+        """Coerce the model output into the fixed schema of string lists."""
+        result = cls._empty_entities()
+        if not isinstance(parsed, dict):
+            return result
+        for key in cls._ENTITY_KEYS:
+            value = parsed.get(key, [])
+            if isinstance(value, str):
+                result[key] = [value] if value.strip() else []
+            elif isinstance(value, list):
+                result[key] = [str(item).strip() for item in value if str(item).strip()]
+        return result
 
     async def _ensure_template_embeddings(self) -> None:
         missing = [category for category in _TEMPLATES if category not in self._template_embeddings]

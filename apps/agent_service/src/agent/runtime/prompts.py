@@ -21,9 +21,13 @@ def build_system_prompt(
         message_for_skills or task.objective,
         agent_role=task.role.value,
     )
-    injected_skills = f"\n\n{skill_block}" if skill_block else ""
+    # The role persona lives in the tenant skills dir (skills/<tenant>/<role>/SKILL.md)
+    # and is injected role-matched by the SkillManager. task.skill is only a short
+    # one-line fallback brief, used when no skill file matched (e.g. skills dir
+    # missing offline) so the subagent still has a persona.
+    persona = skill_block if skill_block else task.skill
     return (
-        f"{task.skill}{injected_skills}\n\n"
+        f"{persona}\n\n"
         "You are an ephemeral subagent. Complete only the assigned task. "
         "Do not write long-term memory, do not emit final customer-visible output, "
         "and do not call tools outside the allowed list.\n\n"
