@@ -127,21 +127,17 @@ async def _complaint_bridges_signal():
 
 async def _detectors_and_worker():
     from apps.agent_service.src.signals.detectors import run_all_detectors
-    from apps.agent_service.src.signals.queue import enqueue_signal, get_signal_queue
-    from apps.agent_service.src.rq_worker import process_signal_job
+    from apps.temporal_worker.src.client import start_tenant_scan
 
     detected = await run_all_detectors(tenant_id=DEMO_TENANT_ID)
-    enqueued = 0
-    for payload in detected:
-        if await enqueue_signal(payload):
-            enqueued += 1
-
-    payload = get_signal_queue().dequeue()
-    drained = False
-    if payload is not None:
-        result = await asyncio.get_event_loop().run_in_executor(None, process_signal_job, payload)
-        drained = bool(result.get("signal_id"))
-    return (len(detected) > 0), f"detected={len(detected)} enqueued={enqueued} worker_drained={drained}"
+    # start_tenant_scan uses Temporal when reachable, otherwise runs the scan and
+    # processes each signal inline (same activity code path) so this check works
+    # with or without a running Temporal server.
+    outcome = await start_tenant_scan(DEMO_TENANT_ID)
+    return (len(detected) > 0), (
+        f"detected={len(detected)} scan_mode={outcome.get('mode')} "
+        f"processed={outcome.get('processed', outcome.get('started'))}"
+    )
 
 
 async def main() -> None:

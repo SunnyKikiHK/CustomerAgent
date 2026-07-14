@@ -235,11 +235,11 @@ class ConversationOrchestrator(BaseOrchestrator):
         agent_input: ConversationAgentInput,
         sentiment: str,
     ) -> None:
-        from apps.agent_service.src.signals.queue import enqueue_signal
+        from apps.temporal_worker.src.client import start_signal_workflow
 
         intent = self._last_intent
         try:
-            await enqueue_signal(
+            await start_signal_workflow(
                 {
                     "tenant_id": agent_input.tenant_id,
                     "customer_id": agent_input.customer_id,

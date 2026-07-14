@@ -1,30 +1,45 @@
-"""Signal queue helpers with idempotency keys."""
+"""Signal payload helpers: normalization, converters, and idempotent recording.
+
+Temporal (``apps/temporal_worker``) now owns durable signal processing, retries,
+and scheduling. This module no longer maintains a Redis work-list or a polling
+consumer; it keeps only the pieces the rest of the system still needs:
+
+- ``SignalQueue`` — payload -> ``SignalAgentInput`` / ``SessionContext`` converters
+  plus a lightweight, TTL-style dedupe used to avoid recording the same signal
+  twice in quick succession (Redis-backed when available, in-memory otherwise).
+- ``enqueue_signal`` — normalize + best-effort record a signal row in status
+  ``queued`` and hand it to Temporal via ``start_signal_workflow``. The workflow
+  (or its in-process fallback) drives the queued -> processing -> done lifecycle.
+"""
 
 from __future__ import annotations
 
-import json
 import os
 from typing import Any
 
 from packages.agent.src.orchestration_types import SignalAgentInput
-from packages.agent.src.types import CustomerSignal, SessionContext
+from packages.agent.src.types import SessionContext
 
 from apps.agent_service.src.signals.normalizer import normalize_signal_payload
 
-try:
+try:  # Redis is optional; dedupe degrades to in-memory when it is absent.
     import redis
 except ImportError:  # pragma: no cover
     redis = None
 
 
 class SignalQueue:
-    """Enqueue and deduplicate customer signals."""
+    """Signal payload converters plus a best-effort dedupe.
+
+    The dedupe prevents the same (tenant, customer, type) signal from being
+    recorded repeatedly within a TTL window. It is not a work queue: Temporal is
+    the system of record for processing, retries, and scheduling.
+    """
 
     def __init__(self, redis_url: str | None = None) -> None:
         self._redis_url = redis_url or os.getenv("REDIS_URL")
         self._redis: Any | None = None
         self._memory_seen: set[str] = set()
-        self._memory_queue: list[dict[str, Any]] = []
 
     def _client(self) -> Any | None:
         if self._redis is not None:
@@ -40,35 +55,27 @@ class SignalQueue:
             return None
 
     def enqueue(self, payload: dict[str, Any], *, ttl_seconds: int = 3600) -> str:
-        """Enqueue a signal if its dedupe key has not been seen recently."""
+        """Return the signal id when first seen in the TTL window, else "".
+
+        Name kept for backward compatibility with callers/tests; this only does
+        dedupe now (no work-list push). A return of "" means "already seen".
+        """
         signal = normalize_signal_payload(payload)
         key = f"signal:dedupe:{signal.id}"
         client = self._client()
         if client is not None:
             if client.setnx(key, "1"):
                 client.expire(key, ttl_seconds)
-                client.rpush("signal:queue", json.dumps(payload, default=str))
                 return signal.id
             return ""
 
         if key in self._memory_seen:
             return ""
         self._memory_seen.add(key)
-        self._memory_queue.append(payload)
         return signal.id
 
-    def dequeue(self) -> dict[str, Any] | None:
-        """Dequeue the next signal payload."""
-        client = self._client()
-        if client is not None:
-            raw = client.lpop("signal:queue")
-            return json.loads(raw) if raw else None
-        if self._memory_queue:
-            return self._memory_queue.pop(0)
-        return None
-
     def to_agent_input(self, payload: dict[str, Any]) -> SignalAgentInput:
-        """Convert a queued payload into a SignalAgentInput."""
+        """Convert a payload into a SignalAgentInput."""
         signal = normalize_signal_payload(payload)
         return SignalAgentInput(
             tenant_id=signal.tenant_id,
@@ -99,24 +106,20 @@ def get_signal_queue() -> SignalQueue:
 
 
 async def enqueue_signal(payload: dict[str, Any]) -> str:
-    """Enqueue a signal and record it in the durable `signals` table.
+    """Record a signal and hand it to Temporal for durable processing.
 
-    Returns the signal id when newly enqueued, or "" when it was a duplicate.
-    Recording is best-effort (skipped when the DB is unavailable).
+    Returns the signal id when the workflow was started (or processed in the
+    fallback path), or "" when it was a duplicate already in flight. Recording
+    happens inside the workflow/fallback, so this function no longer writes the
+    row itself.
     """
-    from apps.agent_service.src.signals.normalizer import normalize_signal_payload
-    from apps.agent_service.src.signals.records import record_signal
+    from apps.temporal_worker.src.client import start_signal_workflow
 
-    signal_id = get_signal_queue().enqueue(payload)
-    if signal_id:
-        signal = normalize_signal_payload(payload)
-        await record_signal(
-            signal,
-            source=str(payload.get("source", "manual")),
-            severity=str(payload.get("severity", "normal")),
-            status="queued",
-        )
-    return signal_id
+    outcome = await start_signal_workflow(payload)
+    if not outcome.get("started"):
+        return ""
+    signal = normalize_signal_payload(payload)
+    return signal.id
 
 
 __all__ = ["SignalQueue", "get_signal_queue", "enqueue_signal"]

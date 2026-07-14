@@ -14,5 +14,6 @@ COPY apps /app/apps
 COPY packages /app/packages
 COPY skills /app/skills
 
-# Signal queue-drain worker.
-CMD ["python", "-m", "apps.agent_service.src.rq_worker"]
+# Temporal worker: serves signal workflows + activities (replaces the old
+# Redis-polling queue-drain worker).
+CMD ["python", "-m", "apps.temporal_worker.src.worker"]

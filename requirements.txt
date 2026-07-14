@@ -23,9 +23,9 @@ SQLAlchemy>=2.0.0
 # Vector store
 pgvector>=0.2.4
 
-# Cache & queue
+# Cache (Redis remains for caching, memory, rate limits, and short-lived state;
+# the signal work queue was replaced by Temporal workflows).
 redis>=5.0.1
-rq>=1.16.2
 
 # LLM SDKs
 openai>=1.13.0
