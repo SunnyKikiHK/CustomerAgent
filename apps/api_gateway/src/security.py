@@ -12,7 +12,7 @@ from __future__ import annotations
 from fastapi import Depends, Header, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
-from packages.auth.src.models import AuthContext, Membership, TenantRole, User
+from packages.auth.src.models import AuthContext, Membership, TenantRole, User, WRITE_ROLES
 from packages.auth.src.security import decode_access_token
 from packages.auth.src.store import get_membership, get_user_by_id
 
@@ -87,4 +87,25 @@ def require_role(*allowed: TenantRole):
     return _dep
 
 
-__all__ = ["current_user", "tenant_context", "require_role"]
+async def require_write(auth: AuthContext = Depends(tenant_context)) -> AuthContext:
+    """Authorize a mutating request: caller must hold a write role in the tenant."""
+    if auth.user.is_platform_admin or auth.role in WRITE_ROLES:
+        return auth
+    raise HTTPException(
+        status_code=status.HTTP_403_FORBIDDEN,
+        detail="This action requires a write role (tenant_admin or csm)",
+    )
+
+
+async def require_read(auth: AuthContext = Depends(tenant_context)) -> AuthContext:
+    """Authorize a read request: any tenant membership (or platform admin) suffices."""
+    return auth
+
+
+__all__ = [
+    "current_user",
+    "tenant_context",
+    "require_role",
+    "require_write",
+    "require_read",
+]

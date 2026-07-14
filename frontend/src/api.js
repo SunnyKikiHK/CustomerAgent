@@ -105,3 +105,48 @@ export function runScan(tenantId) {
 export function fetchSkills(tenantId) {
   return request(`/skills?tenant_id=${encodeURIComponent(tenantId)}`);
 }
+
+// --- Auth + customer simulator ---------------------------------------------
+// The simulator write path requires a JWT. We cache a dev token per session and
+// attach it as a Bearer header on writes; reads still go through X-Tenant-Id.
+
+let _token = null;
+
+export async function login(email, password) {
+  const data = await request("/auth/login", {
+    method: "POST",
+    body: JSON.stringify({ email, password }),
+  });
+  _token = data.access_token;
+  return data;
+}
+
+function authHeaders(tenantId) {
+  const headers = { "X-Tenant-Id": tenantId };
+  if (_token) headers["Authorization"] = `Bearer ${_token}`;
+  return headers;
+}
+
+export function createCustomer(tenantId, payload) {
+  return request("/customers", {
+    method: "POST",
+    headers: authHeaders(tenantId),
+    body: JSON.stringify(payload),
+  });
+}
+
+export function updateCustomer(tenantId, customerId, payload) {
+  return request(`/customers/${encodeURIComponent(customerId)}`, {
+    method: "PATCH",
+    headers: authHeaders(tenantId),
+    body: JSON.stringify(payload),
+  });
+}
+
+export function recordUsageEvent(tenantId, customerId, usageTrend) {
+  return request(`/customers/${encodeURIComponent(customerId)}/usage-events`, {
+    method: "POST",
+    headers: authHeaders(tenantId),
+    body: JSON.stringify({ usage_trend: usageTrend }),
+  });
+}

@@ -1,6 +1,7 @@
 import React, { useState } from "react";
 import ChatView from "./views/ChatView.jsx";
 import Dashboard from "./views/Dashboard.jsx";
+import Simulator from "./views/Simulator.jsx";
 
 // Demo tenant/customer seeded by scripts/seed_playbooks.py.
 const DEFAULT_TENANT = "11111111-1111-1111-1111-111111111111";
@@ -31,6 +32,9 @@ export default function App() {
         <button className={tab === "dashboard" ? "active" : ""} onClick={() => setTab("dashboard")}>
           Signal Dashboard
         </button>
+        <button className={tab === "simulator" ? "active" : ""} onClick={() => setTab("simulator")}>
+          Customer Simulator
+        </button>
       </nav>
 
       <main className="main">
@@ -38,6 +42,7 @@ export default function App() {
           <ChatView tenantId={tenantId} defaultCustomerId={DEFAULT_CUSTOMER} />
         </div>
         {tab === "dashboard" && <Dashboard tenantId={tenantId} />}
+        {tab === "simulator" && <Simulator tenantId={tenantId} />}
       </main>
     </div>
   );
