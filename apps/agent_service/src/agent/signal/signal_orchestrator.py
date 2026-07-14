@@ -32,7 +32,7 @@ class SignalOrchestrator(BaseOrchestrator):
             instructions="Proactive customer-success automation",
             model=worker_model(),
             planner_model=planner_model(),
-            tools=["query_health", "query_playbooks", "send_email", "send_slack"],
+            tools=["query_health", "query_playbooks", "send_email"],
             skip_critic_for_simple=False,
         )
 

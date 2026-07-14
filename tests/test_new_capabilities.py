@@ -28,7 +28,7 @@ def tenant_config() -> AgentConfig:
         instructions="test",
         model="deepseek/deepseek-v4-flash",
         planner_model="deepseek/deepseek-v4-flash",
-        tools=["query_health", "query_playbooks", "send_email", "send_slack"],
+        tools=["query_health", "query_playbooks", "send_email"],
     )
 
 
@@ -177,7 +177,6 @@ def test_tool_registry_enforces_internal_and_mcp_boundaries():
         require_tool_boundary("query_health", ToolBoundary.MCP_ACTION)
     assert set(get_tools_by_boundary(ToolBoundary.MCP_ACTION)) == {
         "send_email",
-        "send_slack",
         "escalate_to_human",
     }
 
@@ -254,7 +253,7 @@ def test_gateway_exposes_only_action_tools():
     from apps.tool_gateway.src.index import mcp
 
     tool_manager = mcp._tool_manager
-    assert set(tool_manager._tools) == {"send_email", "send_slack", "escalate_to_human"}
+    assert set(tool_manager._tools) == {"send_email", "escalate_to_human"}
 
 
 def test_target_phase_imports_and_base_orchestrator_contract():

@@ -2,7 +2,7 @@
 name: outreach-drafting
 description: >
   Signal-side skill for drafting safe, grounded, personalized customer outreach
-  (email or Slack) from prior subagent evidence. Use for the Outreach Draft agent
+  (email) from prior subagent evidence. Use for the Outreach Draft agent
   to propose external writes as structured payloads for compliance review — never
   to send directly.
 agents: outreach_draft

@@ -11,7 +11,7 @@ from packages.agent.src.subagent_types import AgentRole
 
 ROLE = AgentRole.GENERAL
 
-#: Read-only lookups only; never sends email/slack.
+#: Read-only lookups only; never sends email.
 DEFAULT_ALLOWED_TOOLS = ["query_health", "query_playbooks"]
 
 #: One-line fallback persona. The full role SOP lives in

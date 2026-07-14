@@ -22,7 +22,7 @@ dropped sharply. The goal is to re-engage the customer before they churn.
    specific feature or workflow where usage dropped — never a generic "just checking in".
 3. Offer concrete help: a tailored onboarding session, a relevant integration guide, or a
    short call to remove the current blocker.
-4. If there is no reply within 48 hours, escalate by notifying the assigned CSM on Slack
+4. If there is no reply within 48 hours, escalate by notifying the assigned CSM by email
    with full context.
 
 ## Tone and guardrails

@@ -21,7 +21,7 @@ date. The goal is to secure the renewal and, where appropriate, identify expansi
    conversation. Reference concrete usage, not generic praise.
 4. Flag clear expansion signals (power users, hitting plan limits) for the CSM, but do
    not quote new pricing directly — that requires human review.
-5. If the renewal is at risk (low health + no reply), escalate to the CSM on Slack.
+5. If the renewal is at risk (low health + no reply), escalate to the assigned CSM by email.
 
 ## Tone and guardrails
 

@@ -18,16 +18,13 @@ from apps.tool_gateway.src.providers import (
     ActionProvider,
     MockEmailProvider,
     MockHumanEscalationProvider,
-    MockSlackProvider,
 )
 from packages.tool_system.src.tools.escalate_to_human import EscalateToHumanInput
 from packages.tool_system.src.tools.send_email import SendEmailInput
-from packages.tool_system.src.tools.send_slack import SendSlackInput
 
 #: Action name -> input schema used for provider-independent validation.
 _ACTION_SCHEMAS = {
     "send_email": SendEmailInput,
-    "send_slack": SendSlackInput,
     "escalate_to_human": EscalateToHumanInput,
 }
 
@@ -46,7 +43,6 @@ class ActionService:
         self.idempotency = idempotency or get_idempotency_store()
         self.providers = providers or {
             "send_email": MockEmailProvider(),
-            "send_slack": MockSlackProvider(),
             "escalate_to_human": MockHumanEscalationProvider(),
         }
 

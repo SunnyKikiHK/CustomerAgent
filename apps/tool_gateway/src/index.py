@@ -91,33 +91,6 @@ async def send_email(
 
 
 @mcp.tool()
-async def send_slack(
-    tenant_id: str,
-    customer_id: str,
-    channel_id: str,
-    message: str,
-    approval_id: str,
-    idempotency_key: str,
-    urgency: str = "normal",
-    actor: str = "agent",
-    trace_id: str | None = None,
-) -> dict[str, Any]:
-    """Send an approved Slack notification through the configured provider adapter."""
-    result = await get_action_service().execute(
-        "send_slack",
-        {
-            "tenant_id": tenant_id,
-            "customer_id": customer_id,
-            "channel_id": channel_id,
-            "message": message,
-            "urgency": urgency,
-        },
-        _context(tenant_id, trace_id, approval_id, idempotency_key, actor),
-    )
-    return result.model_dump(mode="json")
-
-
-@mcp.tool()
 async def escalate_to_human(
     tenant_id: str,
     customer_id: str,
@@ -158,6 +131,5 @@ __all__ = [
     "mcp",
     "main",
     "send_email",
-    "send_slack",
     "escalate_to_human",
 ]

@@ -224,7 +224,6 @@ def get_skill_manager(tenant_id: str, skills_root: str | Path | None = None) -> 
     """Return tenant skills, using demo-tenant when no tenant directory exists."""
     if tenant_id not in _MANAGERS:
         root = _resolve_skills_root(tenant_id, skills_root)
-        root = _resolve_skills_root(tenant_id, skills_root)
         manager = SkillManager(root)
         manager.load()
         _MANAGERS[tenant_id] = manager

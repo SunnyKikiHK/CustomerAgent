@@ -1,8 +1,8 @@
 """OutreachDraftAgent: customer-facing outreach draft specialist.
 
-Ephemeral subagent that drafts safe, grounded customer outreach (email or
-Slack) using prior subagent evidence. It proposes external writes as payloads
-for the Reflector phase; it never releases customer-visible content on its own.
+Ephemeral subagent that drafts safe, grounded customer outreach (email) using
+prior subagent evidence. It proposes external writes as payloads for the
+Reflector phase; it never releases customer-visible content on its own.
 """
 
 from __future__ import annotations

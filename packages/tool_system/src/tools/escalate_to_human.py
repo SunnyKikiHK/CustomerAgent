@@ -3,10 +3,11 @@
 This is the MCP_ACTION-boundary counterpart to the read-only
 check_human_availability probe. It represents actually paging a human support
 representative over the network, so it runs only through the tool gateway (the
-side-effecting boundary), gated by approval + idempotency like send_email /
-send_slack. This milestone ships only the schema, gateway tool, and a mock
-provider; the conversation turn does not invoke it and conversation external
-writes stay disabled.
+side-effecting boundary), gated by approval + idempotency like send_email. It
+can create an internal escalation record or email the assigned CSM. This
+milestone ships only the schema, gateway tool, and a mock provider; the
+conversation turn does not invoke it and conversation external writes stay
+disabled.
 """
 
 from __future__ import annotations

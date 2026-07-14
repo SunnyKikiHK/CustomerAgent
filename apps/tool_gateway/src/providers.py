@@ -19,13 +19,6 @@ class MockEmailProvider:
         return _mock_id("email", tenant_id, payload)
 
 
-class MockSlackProvider:
-    """Development adapter that records no external side effect."""
-
-    async def execute(self, tenant_id: str, payload: dict[str, Any]) -> str:
-        return _mock_id("slack", tenant_id, payload)
-
-
 class MockHumanEscalationProvider:
     """Development adapter for human escalation; records no external side effect."""
 
@@ -42,6 +35,5 @@ def _mock_id(kind: str, tenant_id: str, payload: dict[str, Any]) -> str:
 __all__ = [
     "ActionProvider",
     "MockEmailProvider",
-    "MockSlackProvider",
     "MockHumanEscalationProvider",
 ]

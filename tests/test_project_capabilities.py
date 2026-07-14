@@ -21,7 +21,7 @@ def tenant_config() -> AgentConfig:
         instructions="test",
         model="deepseek/deepseek-v4-flash",
         planner_model="deepseek/deepseek-v4-flash",
-        tools=["query_health", "query_playbooks", "send_email", "send_slack"],
+        tools=["query_health", "query_playbooks", "send_email"],
     )
 
 
@@ -554,13 +554,24 @@ def test_compliance_critic_skill_targets_role():
     assert "tenant isolation" in persona.lower()
 
 
-def test_critic_persona_falls_back_when_skill_missing():
+def test_critic_persona_falls_back_when_skill_missing(monkeypatch):
+    from apps.agent_service.src.agent.subagents import compliance_critic
     from apps.agent_service.src.agent.subagents.compliance_critic import (
         COMPLIANCE_CRITIC_BRIEF,
         _critic_persona,
     )
 
-    # A tenant with no skills dir yields the code-owned fallback brief.
+    # When no compliance_critic skill persona is available (empty string), the
+    # code-owned fallback brief is used. (get_skill_manager falls back to the
+    # demo tenant's skills dir, so we force the empty-persona path directly
+    # rather than relying on an unknown tenant name.)
+    class _NoSkillManager:
+        def persona_for(self, role: str) -> str:
+            return ""
+
+    monkeypatch.setattr(
+        compliance_critic, "get_skill_manager", lambda tenant_id: _NoSkillManager()
+    )
     assert _critic_persona("no-such-tenant-xyz") == COMPLIANCE_CRITIC_BRIEF
 
 

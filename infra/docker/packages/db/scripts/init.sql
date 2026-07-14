@@ -41,12 +41,13 @@ CREATE TABLE IF NOT EXISTS customers (
     created_at     TIMESTAMPTZ  NOT NULL DEFAULT now()
 );
 
--- Interactions (emails, Slack messages, calls — inbound and outbound)
+-- Interactions (emails, calls — inbound and outbound). The type column is
+-- generic, but email is the only active outbound channel (Slack was removed).
 CREATE TABLE IF NOT EXISTS interactions (
     id           UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     tenant_id    UUID         NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
     customer_id  UUID         NOT NULL REFERENCES customers(id) ON DELETE CASCADE,
-    type         VARCHAR(50)  NOT NULL,                     -- email, slack, call
+    type         VARCHAR(50)  NOT NULL,                     -- email, call, note
     direction    VARCHAR(20)  NOT NULL,                     -- inbound, outbound
     content      TEXT,
     ai_generated BOOLEAN      NOT NULL DEFAULT FALSE,
@@ -178,7 +179,7 @@ CREATE TABLE IF NOT EXISTS action_approvals (
     id            UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     approval_id   VARCHAR(128) NOT NULL,                    -- deterministic id supplied by orchestrator
     tenant_id     UUID         NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
-    action_name   VARCHAR(100) NOT NULL,                    -- send_email, send_slack, ...
+    action_name   VARCHAR(100) NOT NULL,                    -- send_email, escalate_to_human, ...
     trace_id      VARCHAR(128),
     payload_hash  VARCHAR(64),                              -- sha256 of the approved arguments
     approved_by   VARCHAR(255) NOT NULL DEFAULT 'compliance_critic',
@@ -302,3 +303,36 @@ CREATE POLICY tenant_isolation_customer_profiles ON customer_profiles
     FOR ALL USING (tenant_id = current_setting('app.current_tenant_id', true)::UUID);
 CREATE POLICY tenant_isolation_signals ON signals
     FOR ALL USING (tenant_id = current_setting('app.current_tenant_id', true)::UUID);
+
+-- ── Auth: platform users and tenant memberships ─────────────────────────────
+-- Users are global (not tenant-scoped): a single Customer Success Manager may
+-- belong to several tenants. Authorization is derived from tenant_memberships,
+-- never from a client-supplied X-Tenant-Id header. Kept in sync with Alembic
+-- migration 0002_auth_users_memberships.
+CREATE TABLE IF NOT EXISTS users (
+    id                UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    email             VARCHAR(320) NOT NULL UNIQUE,
+    full_name         VARCHAR(255),
+    password_hash     VARCHAR(255) NOT NULL,
+    is_platform_admin BOOLEAN      NOT NULL DEFAULT FALSE,
+    is_active         BOOLEAN      NOT NULL DEFAULT TRUE,
+    created_at        TIMESTAMPTZ  NOT NULL DEFAULT now(),
+    updated_at        TIMESTAMPTZ  NOT NULL DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS tenant_memberships (
+    id                       UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    tenant_id                UUID         NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+    user_id                  UUID         NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    role                     VARCHAR(50)  NOT NULL DEFAULT 'csm',  -- platform_admin, tenant_admin, csm, viewer
+    receives_qbr             BOOLEAN      NOT NULL DEFAULT TRUE,
+    notification_preferences JSONB        NOT NULL DEFAULT '{}',
+    created_at               TIMESTAMPTZ  NOT NULL DEFAULT now(),
+    updated_at               TIMESTAMPTZ  NOT NULL DEFAULT now(),
+    UNIQUE (tenant_id, user_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_tenant_memberships_user ON tenant_memberships(user_id);
+CREATE INDEX IF NOT EXISTS idx_tenant_memberships_tenant ON tenant_memberships(tenant_id);
+CREATE INDEX IF NOT EXISTS idx_tenant_memberships_qbr
+    ON tenant_memberships(tenant_id) WHERE receives_qbr = TRUE;

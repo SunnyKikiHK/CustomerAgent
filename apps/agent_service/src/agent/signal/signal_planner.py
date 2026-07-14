@@ -65,7 +65,7 @@ def build_signal_plan(
                 objective=_outreach_objective(signal.type),
                 skill=OUTREACH_BRIEF,
                 input={"signal_type": signal.type, "memory_excerpt": memory_excerpt},
-                allowed_tools=["send_email", "send_slack"],
+                allowed_tools=["send_email"],
                 depends_on=outreach_depends,
             )
         )

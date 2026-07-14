@@ -23,8 +23,6 @@ from packages.tool_system.src.tools.query_playbooks import TOOL_DEFINITION as QU
 from packages.tool_system.src.tools.query_playbooks import execute_query_playbooks
 from packages.tool_system.src.tools.send_email import TOOL_DEFINITION as SEND_EMAIL_DEFINITION
 from packages.tool_system.src.tools.send_email import execute_send_email
-from packages.tool_system.src.tools.send_slack import TOOL_DEFINITION as SEND_SLACK_DEFINITION
-from packages.tool_system.src.tools.send_slack import execute_send_slack
 
 ToolExecutor = Callable[..., Awaitable[Any]]
 
@@ -178,15 +176,6 @@ def register_builtin_tools() -> None:
         boundary=ToolBoundary.MCP_ACTION,
         side_effecting=True,
         tags=["write", "outreach"],
-        overwrite=True,
-    )
-    register_tool(
-        "send_slack",
-        SEND_SLACK_DEFINITION,
-        execute_send_slack,
-        boundary=ToolBoundary.MCP_ACTION,
-        side_effecting=True,
-        tags=["write", "escalation"],
         overwrite=True,
     )
     register_tool(
