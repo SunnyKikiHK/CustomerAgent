@@ -208,12 +208,23 @@ class SkillManager:
 
 
 _MANAGERS: dict[str, SkillManager] = {}
+_DEFAULT_TENANT_SKILLS = "demo-tenant"
+
+
+def _resolve_skills_root(tenant_id: str, skills_root: str | Path | None) -> Path:
+    """Prefer tenant skills, falling back to the demo tenant defaults."""
+    if skills_root is not None:
+        return Path(skills_root)
+    root = Path(__file__).resolve().parents[5] / "skills"
+    tenant_root = root / tenant_id
+    return tenant_root if tenant_root.is_dir() else root / _DEFAULT_TENANT_SKILLS
 
 
 def get_skill_manager(tenant_id: str, skills_root: str | Path | None = None) -> SkillManager:
-    """Return a tenant-scoped skill manager."""
+    """Return tenant skills, using demo-tenant when no tenant directory exists."""
     if tenant_id not in _MANAGERS:
-        root = skills_root or Path(__file__).resolve().parents[5] / "skills" / tenant_id
+        root = _resolve_skills_root(tenant_id, skills_root)
+        root = _resolve_skills_root(tenant_id, skills_root)
         manager = SkillManager(root)
         manager.load()
         _MANAGERS[tenant_id] = manager

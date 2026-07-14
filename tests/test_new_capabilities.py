@@ -10,7 +10,10 @@ import pytest
 from apps.agent_service.src.agent.conversation.intent import IntentCategory, IntentRecognizer, UrgencyLevel
 from apps.agent_service.src.agent.conversation.conversation_planner import build_conversation_plan
 from apps.agent_service.src.agent.runtime.monitor import get_performance_monitor
-from apps.agent_service.src.agent.runtime.skills import SkillManager
+from apps.agent_service.src.agent.runtime.skills import (
+    SkillManager,
+    _resolve_skills_root,
+)
 from apps.agent_service.src.agent.signal.signal_planner import build_signal_plan
 from apps.agent_service.src.signals.queue import SignalQueue
 from packages.agent.src.config import AgentConfig
@@ -40,6 +43,16 @@ def test_intent_pattern_and_vote():
     )
     assert voted == IntentCategory.BILLING
     assert recognizer._urgency("urgent refund now", IntentCategory.BILLING) == UrgencyLevel.CRITICAL
+
+
+def test_missing_tenant_uses_demo_skills():
+    root = _resolve_skills_root(f"missing-{uuid.uuid4()}", None)
+    manager = SkillManager(root)
+    manager.load()
+
+    assert root.name == "demo-tenant"
+    assert manager.skills
+    assert manager.prompt_for("I need help", "general")
 
 
 def test_skill_manager_matches_keywords(tmp_path):
