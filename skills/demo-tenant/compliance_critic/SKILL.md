@@ -33,11 +33,18 @@ external system. Nothing is emitted or executed until you have reviewed it.
 
 ## Decision
 
-- Approve only when the aggregated output is safe, grounded, policy-compliant, and
-  free of tenant/PII violations.
+- Approve when the aggregated output is safe, grounded, policy-compliant, and free
+  of tenant/PII violations.
 - When customer-visible fields contain flagged content, do not silently mask it —
   block and require a rewrite.
-- Prefer blocking over emitting when uncertain.
+- Conversation turns with **no external writes** should almost always be approved
+  when the reply is helpful and conservative. Asking for an order/transaction id,
+  explaining refund next steps, or saying verification is required is **allowed**.
+- Block conversation replies only for real hard issues: cross-tenant leakage, PII
+  or secrets, guaranteed refund promises, fabricated account/order facts, or unsafe
+  instructions.
+- Prefer blocking over emitting when a hard safety issue is uncertain; do **not**
+  block merely because a refund order id is still missing.
 
 ## Prohibitions
 

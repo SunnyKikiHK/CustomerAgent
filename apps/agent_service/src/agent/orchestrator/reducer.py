@@ -5,9 +5,24 @@ from __future__ import annotations
 from typing import Any
 
 from packages.agent.src.orchestration_types import ComplianceReview, FinalDecision
-from packages.agent.src.subagent_types import SubagentResult
+from packages.agent.src.subagent_types import AgentRole, SubagentResult
 
 from apps.agent_service.src.agent.orchestrator.policy import is_customer_visible_field
+
+#: Roles whose markdown is customer-facing answer text.
+#: Retrieval/analysis specialists produce evidence for other agents only —
+#: their markdown must never be concatenated into the customer reply.
+_CUSTOMER_FACING_ROLES: frozenset[AgentRole] = frozenset(
+    {
+        AgentRole.GENERAL,
+        AgentRole.TECHNICAL,
+        AgentRole.BILLING,
+        AgentRole.ESCALATION,
+        AgentRole.OUTREACH_DRAFT,
+        AgentRole.NPS_OUTREACH,
+        AgentRole.QBR_REPORT,
+    }
+)
 
 
 def extract_proposed_external_writes(results: list[SubagentResult]) -> list[dict[str, Any]]:
@@ -18,6 +33,23 @@ def extract_proposed_external_writes(results: list[SubagentResult]) -> list[dict
         if isinstance(proposed, list):
             writes.extend(item for item in proposed if isinstance(item, dict))
     return writes
+
+
+def customer_facing_markdown(results: list[SubagentResult]) -> str:
+    """Join only answer-role markdown for the customer-visible reply.
+
+    Playbook retrieval / health analysis stay in ``subagent_results`` for the
+    critic and audit trail, but are not shown to the customer.
+    """
+    sections = [
+        result.markdown.strip()
+        for result in results
+        if result.success
+        and result.markdown
+        and result.role in _CUSTOMER_FACING_ROLES
+        and result.markdown.strip()
+    ]
+    return "\n\n".join(sections)
 
 
 def finalize_decision(
@@ -60,10 +92,10 @@ def finalize_decision(
             ),
         )
 
-    markdown_sections = [result.markdown for result in results if result.success and result.markdown]
+    response_text = customer_facing_markdown(results) or review.feedback
     return FinalDecision(
         action="emit_or_execute_approved_payload",
-        response_text="\n\n".join(markdown_sections) if markdown_sections else review.feedback,
+        response_text=response_text,
         approved_external_writes=redacted_writes,
         subagent_results=results,
         compliance_review=review,
@@ -160,6 +192,7 @@ _apply_redactions = apply_redactions
 
 __all__ = [
     "extract_proposed_external_writes",
+    "customer_facing_markdown",
     "finalize_decision",
     "apply_redactions",
     "_extract_proposed_external_writes",

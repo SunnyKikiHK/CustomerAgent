@@ -44,6 +44,7 @@ async def rewrite_query(
             model=model,
             temperature=0.3,
             max_tokens=256,
+            reasoning=False,
             name="mcp.retrieval.rewrite",
         )
         raw = response.text
@@ -86,6 +87,7 @@ async def rerank_candidates(
             model=model,
             temperature=0.0,
             max_tokens=256,
+            reasoning=False,
             name="mcp.retrieval.rerank",
         )
         raw = response.text

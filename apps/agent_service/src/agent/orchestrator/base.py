@@ -43,7 +43,9 @@ SAFE_COMPLIANCE_FALLBACK = (
 _RETRY_COMPLIANCE_CONSTRAINT = (
     "A previous response draft was rejected during compliance review. Produce a "
     "new, fully grounded response that contains no personal data, credentials, "
-    "secrets, raw system errors, or unsupported claims."
+    "secrets, raw system errors, or unsupported claims. For refund help requests, "
+    "ask for the order/transaction id and describe next steps without promising a "
+    "refund outcome."
 )
 
 

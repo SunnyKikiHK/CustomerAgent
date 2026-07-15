@@ -26,6 +26,11 @@ markdown (health analysis + playbook evidence) as your only source of facts.
     dissatisfaction; do not over-promise.
   - `renewal_risk` / `renewal_due` → a renewal-save check-in.
   - `low_health` → an at-risk recovery outreach.
+  - `nps_detractor` → **internal CSM alert**, not a customer promo. Summarize the
+    detractor feedback (score/comment if present) and recommended follow-up. Emit
+    `proposed_external_writes` as a `send_email` payload; trusted code will force
+    the recipient to the CSM inbox (`EMAIL_FROM`). Do not draft a customer-facing
+    automated apology as the primary action for this signal.
 - Do not include raw PII beyond the approved recipient.
 
 ## Workflow

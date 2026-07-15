@@ -9,8 +9,8 @@ import {
 
 // Demo credentials seeded by scripts/seed_users.py. In a real deployment these
 // would come from a login screen; the simulator auto-logs-in for convenience.
-const DEMO_EMAIL = "csm@demo.test";
-const DEMO_PASSWORD = "demo-password";
+const DEMO_EMAIL = "csm@demo.io";
+const DEMO_PASSWORD = "demo-csm-password";
 
 function emptyForm() {
   return {

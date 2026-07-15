@@ -238,19 +238,32 @@ class ConversationOrchestrator(BaseOrchestrator):
         from apps.temporal_worker.src.client import start_signal_workflow
 
         intent = self._last_intent
+        # Escalation / explicit human-flag turns raise nps_detractor so the signal
+        # path can notify the CSM inbox (EMAIL_FROM). Other unhappy turns stay on
+        # negative_sentiment for customer-facing recovery outreach.
+        signal_type = (
+            "nps_detractor"
+            if intent is not None and intent.intent == IntentCategory.ESCALATION
+            else "negative_sentiment"
+        )
         try:
             await start_signal_workflow(
                 {
                     "tenant_id": agent_input.tenant_id,
                     "customer_id": agent_input.customer_id,
-                    "type": "negative_sentiment",
+                    "type": signal_type,
                     "severity": "high",
                     "source": "chat_bridge",
                     "payload": {
-                        "reason": f"{intent.intent.value} intent in chat" if intent else "negative sentiment",
+                        "reason": (
+                            f"{intent.intent.value} intent in chat" if intent else "negative sentiment"
+                        ),
                         "message": agent_input.message.content[:500],
                         "sentiment": sentiment,
                         "session_id": agent_input.session_id,
+                        # No survey score for chat-bridged escalations; CSM draft still works.
+                        "score": None,
+                        "comment": agent_input.message.content[:500],
                     },
                 }
             )

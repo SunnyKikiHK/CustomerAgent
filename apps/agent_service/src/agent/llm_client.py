@@ -2,6 +2,16 @@
 
 This module is a direct-provider stand-in until the dedicated LLM Gateway owns
 model routing, caching, billing, and circuit breaking.
+
+Reasoning (thinking) mode is controlled per call via ``reasoning=True/False``,
+or left unset to follow ``LLM_REASONING_DEFAULT`` (default off for latency).
+
+When enabled, the OpenRouter payload is always:
+
+    {"reasoning": {"enabled": true, "budget_tokens": <BUDGET_TOKENS>}}
+
+where ``BUDGET_TOKENS`` is read from the environment (default 512). Latency-sensitive
+steps (intent, role routing, rewrite/rerank, memory) always pass ``reasoning=False``.
 """
 
 from __future__ import annotations
@@ -15,6 +25,45 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from packages.agent.src.models import worker_model
 from packages.agent.src.types import LLMUsage
+
+#: Default reasoning token budget when ``BUDGET_TOKENS`` is unset.
+_DEFAULT_BUDGET_TOKENS = 512
+
+
+def budget_tokens() -> int:
+    """Return the reasoning token budget from ``BUDGET_TOKENS`` (default 512)."""
+    raw = os.getenv("BUDGET_TOKENS", str(_DEFAULT_BUDGET_TOKENS)).strip()
+    try:
+        value = int(raw)
+    except ValueError:
+        return _DEFAULT_BUDGET_TOKENS
+    return max(0, value)
+
+
+def reasoning_default() -> bool:
+    """Whether calls that omit ``reasoning=`` should enable thinking.
+
+    Controlled by ``LLM_REASONING_DEFAULT`` (default false). Keep off for chat
+    latency; set to 1/true only when you want thinking on subagents/critic.
+    """
+    raw = (os.getenv("LLM_REASONING_DEFAULT") or "0").strip().lower()
+    return raw in {"1", "true", "yes", "on"}
+
+
+def reasoning_payload(enabled: bool) -> dict[str, Any]:
+    """Build the OpenRouter ``reasoning`` object for a completion request.
+
+    Enabled shape (required by reasoning models):
+
+        {"enabled": true, "budget_tokens": <BUDGET_TOKENS>}
+
+    Disabled shape:
+
+        {"enabled": false}
+    """
+    if enabled:
+        return {"enabled": True, "budget_tokens": budget_tokens()}
+    return {"enabled": False}
 
 
 class LLMMessage(BaseModel):
@@ -72,8 +121,15 @@ class LLMClient:
         name: str = "agent.llm.complete",
         metadata: Mapping[str, Any] | None = None,
     ) -> LLMResponse:
-        """Call OpenAI Chat Completions and return normalized text/usage."""
+        """Call OpenAI Chat Completions and return normalized text/usage.
+
+        ``reasoning``:
+          - ``None`` (default) -> ``LLM_REASONING_DEFAULT`` (off unless set)
+          - ``True`` / ``False`` -> explicit override for this call
+        Latency-sensitive steps should pass ``reasoning=False`` explicitly.
+        """
         selected_model = model or self.default_model
+        use_reasoning = reasoning_default() if reasoning is None else bool(reasoning)
         payload_messages = [self._serialize_message(message) for message in messages]
         generation = self._start_generation(
             name=name,
@@ -87,11 +143,13 @@ class LLMClient:
             "model": selected_model,
             "messages": payload_messages,
             "temperature": temperature,
+            # `reasoning` is an OpenRouter extension, not an OpenAI SDK kwarg.
+            # The SDK rejects unknown top-level kwargs, so it must be passed via
+            # extra_body to reach the provider verbatim.
+            "extra_body": {"reasoning": reasoning_payload(use_reasoning)},
         }
         if max_tokens is not None:
             request["max_tokens"] = max_tokens
-        if reasoning is not None:
-            request["reasoning"] = reasoning
 
         try:
             completion = await self._client.chat.completions.create(**cast(Any, request))
@@ -178,4 +236,11 @@ class LLMClient:
             return
 
 
-__all__ = ["LLMClient", "LLMMessage", "LLMResponse"]
+__all__ = [
+    "LLMClient",
+    "LLMMessage",
+    "LLMResponse",
+    "budget_tokens",
+    "reasoning_default",
+    "reasoning_payload",
+]

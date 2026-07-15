@@ -107,8 +107,24 @@ class SignalOrchestrator(BaseOrchestrator):
             },
         )
 
+        writes = list(decision.approved_external_writes)
+        # NPS detractors: always notify the CSM inbox (EMAIL_FROM), never the
+        # customer. Trusted code rewrites/synthesizes the send_email payload.
+        if agent_input.signal.type == "nps_detractor":
+            from packages.tool_system.src.tools.notify_csm import (
+                ensure_nps_detractor_csm_notify,
+            )
+
+            writes = ensure_nps_detractor_csm_notify(
+                tenant_id=agent_input.tenant_id,
+                customer_id=agent_input.customer_id,
+                signal_payload=agent_input.signal.payload or {},
+                draft_markdown=decision.response_text or "",
+                approved_writes=writes,
+            )
+
         results: list[dict[str, Any]] = []
-        for index, write in enumerate(decision.approved_external_writes):
+        for index, write in enumerate(writes):
             try:
                 action_name, arguments = _parse_approved_write(write)
             except ValueError as exc:

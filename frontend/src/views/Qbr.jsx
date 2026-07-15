@@ -1,8 +1,8 @@
 import React, { useState, useEffect } from "react";
 import { generateQbr, fetchQbrReports, fetchQbrReport, login } from "../api.js";
 
-const DEMO_EMAIL = "csm@demo.test";
-const DEMO_PASSWORD = "demo-password";
+const DEMO_EMAIL = "csm@demo.io";
+const DEMO_PASSWORD = "demo-csm-password";
 
 // Tenant QBR view: trigger generation, list reports, and preview one report's
 // deterministic metrics snapshot plus its generated narrative.

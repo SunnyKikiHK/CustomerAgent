@@ -296,6 +296,7 @@ class ConversationMemory:
                 [LLMMessage(role="user", content=prompt)],
                 temperature=0.0,
                 max_tokens=220,
+                reasoning=False,
                 name="memory.compress.summary",
                 metadata={"component": "conversation_memory", "kind": "summary"},
             )
@@ -338,6 +339,7 @@ class ConversationMemory:
                 [LLMMessage(role="user", content=prompt)],
                 temperature=0.0,
                 max_tokens=260,
+                reasoning=False,
                 name="memory.profile.extract",
                 metadata={"component": "conversation_memory", "kind": "profile"},
             )

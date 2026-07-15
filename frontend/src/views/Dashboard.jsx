@@ -1,5 +1,9 @@
 import React, { useState, useEffect, useCallback } from "react";
-import { fetchCustomers, fetchSignals, runScan } from "../api.js";
+import { fetchCustomers, fetchSignals, runScan, login } from "../api.js";
+
+// Demo credentials seeded by scripts/seed_users.py.
+const DEMO_EMAIL = "csm@demo.io";
+const DEMO_PASSWORD = "demo-csm-password";
 
 function healthClass(score) {
   if (score == null) return "";
@@ -14,6 +18,7 @@ export default function Dashboard({ tenantId }) {
   const [error, setError] = useState("");
   const [scanning, setScanning] = useState(false);
   const [scanResult, setScanResult] = useState(null);
+  const [authed, setAuthed] = useState(false);
 
   const load = useCallback(async () => {
     setError("");
@@ -27,8 +32,27 @@ export default function Dashboard({ tenantId }) {
   }, [tenantId]);
 
   useEffect(() => {
-    load();
-  }, [load]);
+    let cancelled = false;
+    (async () => {
+      try {
+        await login(DEMO_EMAIL, DEMO_PASSWORD);
+        if (!cancelled) setAuthed(true);
+      } catch (err) {
+        if (!cancelled) {
+          setError(
+            `Login failed (${String(err.message || err)}). Run scripts/seed_users.py for csm@demo.io.`
+          );
+        }
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [tenantId]);
+
+  useEffect(() => {
+    if (authed) load();
+  }, [authed, load]);
 
   async function onScan() {
     setScanning(true);

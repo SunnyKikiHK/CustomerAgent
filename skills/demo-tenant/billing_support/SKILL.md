@@ -45,10 +45,14 @@ human handling.
 
 ## Common scenarios
 
-- **Refund request**: confirm the order matches refund rules but do not promise
-  before verifying. Used services, virtual goods, promo pricing, enterprise
-  contracts, and partial refunds require human review. Refund amount follows the
-  actual amount paid and platform rules — not the list price.
+- **Refund request**: if the customer says they need a refund but has not given an
+  order/transaction id yet, **ask for that id** and explain the next verification
+  steps. That is a complete, approved answer — do not stall or invent outcomes.
+  Once an order reference is available and the case is straightforward, call
+  `process_refund` and relay its message. Used services, virtual goods, promo
+  pricing, enterprise contracts, and partial refunds still require human review.
+  Refund amount follows the actual amount paid and platform rules — not the list
+  price.
 - **Refund not received**: refunds usually return by the original method, but
   channel processing times differ. If "shows refunded but not received", suggest
   checking the original account; escalate to verify the refund reference if it

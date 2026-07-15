@@ -1,3 +1,5 @@
+# 1. docker compose -f infra/docker/docker-compose.yml up -d postgres langfuse-web langfuse-worker
+# 2. docker compose -f infra/docker/docker-compose.yml up -d
 services:
   tool-gateway:
     build:
@@ -13,6 +15,7 @@ services:
       DATABASE_URL: postgresql://sunny:sunny@postgres:5432/agent
       REDIS_URL: redis://redis:6379/0
       EMAIL_PROVIDER: "${EMAIL_PROVIDER:-mock}"
+      EMAIL_FROM: "${EMAIL_FROM:-success@example.com}"
       INTEGRATION_ENCRYPTION_KEY: "${INTEGRATION_ENCRYPTION_KEY:-}" # encrypts that per-user refresh token with INTEGRATION_ENCRYPTION_KEY before storing it in integration_credentials.
       CS_MANAGER_GOOGLE_CLOUD_CLIENT_ID: "${CS_MANAGER_GOOGLE_CLOUD_CLIENT_ID:-}" # application’s Google OAuth client identity
       CS_MANAGER_GOOGLE_CLOUD_CLIENT_SECRET: "${CS_MANAGER_GOOGLE_CLOUD_CLIENT_SECRET:-}" # Secret proving the application is allowed to use that OAuth client
@@ -35,6 +38,7 @@ services:
     image: customer-agent/api-gateway:local
     container_name: agent_api_gateway
     environment:
+      APP_ENV: "${APP_ENV:-local}"
       DATABASE_URL: postgresql://sunny:sunny@postgres:5432/agent
       REDIS_URL: redis://redis:6379/0
       MCP_TOOL_GATEWAY_URL: http://tool-gateway:8002/mcp
@@ -46,6 +50,14 @@ services:
       OPENROUTER_MODEL: "${OPENROUTER_MODEL:-deepseek/deepseek-v4-flash}"
       OPENROUTER_LARGE_MODEL: "${OPENROUTER_LARGE_MODEL:-deepseek/deepseek-v4-pro}"
       EMBEDDING_MODEL: "${EMBEDDING_MODEL:-qwen/qwen3-embedding-8b}"
+      EMBEDDING_DIM: "${EMBEDDING_DIM:-1536}"
+      BUDGET_TOKENS: "${BUDGET_TOKENS:-512}"
+      # 0/false = faster chat (default). 1/true enables thinking for calls that omit reasoning=.
+      LLM_REASONING_DEFAULT: "${LLM_REASONING_DEFAULT:-0}"
+      LLM_TIMEOUT_SECONDS: "${LLM_TIMEOUT_SECONDS:-45}"
+      LLM_MAX_RETRIES: "${LLM_MAX_RETRIES:-1}"
+      CONVERSATION_LLM_PLANNER: "${CONVERSATION_LLM_PLANNER:-1}"
+      LOG_LEVEL: "${LOG_LEVEL:-INFO}"
       TEMPORAL_ADDRESS: "${TEMPORAL_ADDRESS:-temporal:7233}"
       TEMPORAL_NAMESPACE: "${TEMPORAL_NAMESPACE:-default}"
       TEMPORAL_TASK_QUEUE: "${TEMPORAL_TASK_QUEUE:-customer-agent-signals}"
@@ -53,6 +65,14 @@ services:
       AUTH_JWT_SECRET: "${AUTH_JWT_SECRET:-test}"
       INTEGRATION_ENCRYPTION_KEY: "${INTEGRATION_ENCRYPTION_KEY:-}"
       EMAIL_PROVIDER: "${EMAIL_PROVIDER:-mock}"
+      # CSM notify inbox for nps_detractor (and similar) self-alerts.
+      EMAIL_FROM: "${EMAIL_FROM:-success@example.com}"
+      # Langfuse client (optional; app degrades if unset). Host is the in-compose service.
+      LANGFUSE_PUBLIC_KEY: "${LANGFUSE_PUBLIC_KEY:-}"
+      LANGFUSE_SECRET_KEY: "${LANGFUSE_SECRET_KEY:-}"
+      # Always the in-compose service name (host-side scripts use localhost:3000).
+      LANGFUSE_HOST: "http://langfuse-web:3000"
+      OTEL_EXPORTER_OTLP_ENDPOINT: "${OTEL_EXPORTER_OTLP_ENDPOINT:-}"
       CS_MANAGER_GOOGLE_CLOUD_CLIENT_ID: "${CS_MANAGER_GOOGLE_CLOUD_CLIENT_ID:-}"
       CS_MANAGER_GOOGLE_CLOUD_CLIENT_SECRET: "${CS_MANAGER_GOOGLE_CLOUD_CLIENT_SECRET:-}"
       CS_MANAGER_GOOGLE_CLOUD_AUTH_URI: "${CS_MANAGER_GOOGLE_CLOUD_AUTH_URI:-https://accounts.google.com/o/oauth2/auth}"
@@ -88,12 +108,24 @@ services:
       OPENROUTER_MODEL: "${OPENROUTER_MODEL:-deepseek/deepseek-v4-flash}"
       OPENROUTER_LARGE_MODEL: "${OPENROUTER_LARGE_MODEL:-deepseek/deepseek-v4-pro}"
       EMBEDDING_MODEL: "${EMBEDDING_MODEL:-qwen/qwen3-embedding-8b}"
+      EMBEDDING_DIM: "${EMBEDDING_DIM:-1536}"
+      BUDGET_TOKENS: "${BUDGET_TOKENS:-512}"
+      LLM_REASONING_DEFAULT: "${LLM_REASONING_DEFAULT:-0}"
+      LLM_TIMEOUT_SECONDS: "${LLM_TIMEOUT_SECONDS:-45}"
+      LLM_MAX_RETRIES: "${LLM_MAX_RETRIES:-1}"
+      LOG_LEVEL: "${LOG_LEVEL:-INFO}"
       TEMPORAL_ADDRESS: "${TEMPORAL_ADDRESS:-temporal:7233}"
       TEMPORAL_NAMESPACE: "${TEMPORAL_NAMESPACE:-default}"
       TEMPORAL_TASK_QUEUE: "${TEMPORAL_TASK_QUEUE:-customer-agent-signals}"
       EMAIL_PROVIDER: "${EMAIL_PROVIDER:-mock}"
+      EMAIL_FROM: "${EMAIL_FROM:-success@example.com}"
       AUTH_JWT_SECRET: "${AUTH_JWT_SECRET:-${JWT_SECRET:-dev-jwt-secret-change-me}}"
       INTEGRATION_ENCRYPTION_KEY: "${INTEGRATION_ENCRYPTION_KEY:-}"
+      LANGFUSE_PUBLIC_KEY: "${LANGFUSE_PUBLIC_KEY:-}"
+      LANGFUSE_SECRET_KEY: "${LANGFUSE_SECRET_KEY:-}"
+      # Always the in-compose service name (host-side scripts use localhost:3000).
+      LANGFUSE_HOST: "http://langfuse-web:3000"
+      OTEL_EXPORTER_OTLP_ENDPOINT: "${OTEL_EXPORTER_OTLP_ENDPOINT:-}"
     networks:
       - postgres_network
     depends_on:
