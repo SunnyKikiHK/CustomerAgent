@@ -119,6 +119,12 @@ def observe(
             elapsed_ms,
             span.attributes,
         )
+        try:
+            from packages.observability.src.collector import record_span
+
+            record_span(name, elapsed_ms, status)
+        except Exception:
+            pass
         _end_langfuse_span(langfuse_span, span, status, error)
         if otel_cm is not None:
             try:
