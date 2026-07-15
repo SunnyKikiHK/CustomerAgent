@@ -2,17 +2,30 @@ services:
   tool-gateway:
     build:
       context: ../..
-      dockerfile: apps/tool_gateway/Dockerfile # dockfile's working directory based on context to build image
-    image: customer-agent/tool-gateway:local 
+      dockerfile: apps/tool_gateway/Dockerfile # dockerfile's working directory based on context to build image
+    image: customer-agent/tool-gateway:local
     container_name: agent_tool_gateway
     environment:
       MCP_TOOL_GATEWAY_TOKEN: "${MCP_TOOL_GATEWAY_TOKEN:-}"
       MCP_GATEWAY_HOST: 0.0.0.0
       MCP_GATEWAY_PORT: "8002"
+      # Approval/idempotency stores + Google email need DB/Redis + OAuth client.
+      DATABASE_URL: postgresql://sunny:sunny@postgres:5432/agent
+      REDIS_URL: redis://redis:6379/0
+      EMAIL_PROVIDER: "${EMAIL_PROVIDER:-mock}"
+      INTEGRATION_ENCRYPTION_KEY: "${INTEGRATION_ENCRYPTION_KEY:-}" # encrypts that per-user refresh token with INTEGRATION_ENCRYPTION_KEY before storing it in integration_credentials.
+      CS_MANAGER_GOOGLE_CLOUD_CLIENT_ID: "${CS_MANAGER_GOOGLE_CLOUD_CLIENT_ID:-}" # application’s Google OAuth client identity
+      CS_MANAGER_GOOGLE_CLOUD_CLIENT_SECRET: "${CS_MANAGER_GOOGLE_CLOUD_CLIENT_SECRET:-}" # Secret proving the application is allowed to use that OAuth client
+      CS_MANAGER_GOOGLE_CLOUD_TOKEN_URI: "${CS_MANAGER_GOOGLE_CLOUD_TOKEN_URI:-https://oauth2.googleapis.com/token}" # Google endpoint used to obtain/refresh access tokens
     ports:
       - "8002:8002"
     networks:
       - postgres_network
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
     restart: unless-stopped
 
   api-gateway:
@@ -31,10 +44,21 @@ services:
       OPENROUTER_API_KEY: "${OPENROUTER_API_KEY:-}"
       OPENROUTER_BASE_URL: "${OPENROUTER_BASE_URL:-https://openrouter.ai/api/v1}"
       OPENROUTER_MODEL: "${OPENROUTER_MODEL:-deepseek/deepseek-v4-flash}"
+      OPENROUTER_LARGE_MODEL: "${OPENROUTER_LARGE_MODEL:-deepseek/deepseek-v4-pro}"
       EMBEDDING_MODEL: "${EMBEDDING_MODEL:-qwen/qwen3-embedding-8b}"
       TEMPORAL_ADDRESS: "${TEMPORAL_ADDRESS:-temporal:7233}"
       TEMPORAL_NAMESPACE: "${TEMPORAL_NAMESPACE:-default}"
+      TEMPORAL_TASK_QUEUE: "${TEMPORAL_TASK_QUEUE:-customer-agent-signals}"
       CORS_ALLOW_ORIGINS: "*"
+      AUTH_JWT_SECRET: "${AUTH_JWT_SECRET:-test}"
+      INTEGRATION_ENCRYPTION_KEY: "${INTEGRATION_ENCRYPTION_KEY:-}"
+      EMAIL_PROVIDER: "${EMAIL_PROVIDER:-mock}"
+      CS_MANAGER_GOOGLE_CLOUD_CLIENT_ID: "${CS_MANAGER_GOOGLE_CLOUD_CLIENT_ID:-}"
+      CS_MANAGER_GOOGLE_CLOUD_CLIENT_SECRET: "${CS_MANAGER_GOOGLE_CLOUD_CLIENT_SECRET:-}"
+      CS_MANAGER_GOOGLE_CLOUD_AUTH_URI: "${CS_MANAGER_GOOGLE_CLOUD_AUTH_URI:-https://accounts.google.com/o/oauth2/auth}"
+      CS_MANAGER_GOOGLE_CLOUD_TOKEN_URI: "${CS_MANAGER_GOOGLE_CLOUD_TOKEN_URI:-https://oauth2.googleapis.com/token}"
+      CS_MANAGER_GOOGLE_CLOUD_REDIRECT_URIS: "${CS_MANAGER_GOOGLE_CLOUD_REDIRECT_URIS:-http://localhost:8000/integrations/google/callback}"
+      CS_MANAGER_GOOGLE_CLOUD_PROJECT_ID: "${CS_MANAGER_GOOGLE_CLOUD_PROJECT_ID:-}"
     ports:
       - "8000:8000"
     networks:
@@ -44,6 +68,8 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+      tool-gateway:
+        condition: service_started
     restart: unless-stopped
 
   agent-worker:
@@ -60,10 +86,14 @@ services:
       OPENROUTER_API_KEY: "${OPENROUTER_API_KEY:-}"
       OPENROUTER_BASE_URL: "${OPENROUTER_BASE_URL:-https://openrouter.ai/api/v1}"
       OPENROUTER_MODEL: "${OPENROUTER_MODEL:-deepseek/deepseek-v4-flash}"
+      OPENROUTER_LARGE_MODEL: "${OPENROUTER_LARGE_MODEL:-deepseek/deepseek-v4-pro}"
       EMBEDDING_MODEL: "${EMBEDDING_MODEL:-qwen/qwen3-embedding-8b}"
       TEMPORAL_ADDRESS: "${TEMPORAL_ADDRESS:-temporal:7233}"
       TEMPORAL_NAMESPACE: "${TEMPORAL_NAMESPACE:-default}"
       TEMPORAL_TASK_QUEUE: "${TEMPORAL_TASK_QUEUE:-customer-agent-signals}"
+      EMAIL_PROVIDER: "${EMAIL_PROVIDER:-mock}"
+      AUTH_JWT_SECRET: "${AUTH_JWT_SECRET:-${JWT_SECRET:-dev-jwt-secret-change-me}}"
+      INTEGRATION_ENCRYPTION_KEY: "${INTEGRATION_ENCRYPTION_KEY:-}"
     networks:
       - postgres_network
     depends_on:
@@ -73,6 +103,8 @@ services:
         condition: service_healthy
       temporal:
         condition: service_healthy
+      tool-gateway:
+        condition: service_started
     restart: unless-stopped
 
   postgres:

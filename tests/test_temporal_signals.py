@@ -19,13 +19,18 @@ import pytest
 
 def test_signal_queue_dedupe_still_works():
     """The migration kept dedupe: same signal seen twice returns "" the 2nd time."""
+    import uuid
+
     from apps.agent_service.src.signals.queue import SignalQueue
 
     queue = SignalQueue()
+    # Unique type so a leftover Redis TTL key from a previous run cannot pollute
+    # the first-seen assertion (dedupe keys live for 1h by default).
+    unique_type = f"usage_decline_{uuid.uuid4().hex[:10]}"
     payload = {
         "tenant_id": "11111111-1111-1111-1111-111111111111",
         "customer_id": "22222222-2222-2222-2222-222222222222",
-        "type": "usage_decline",
+        "type": unique_type,
         "payload": {"decline_pct": 40},
     }
     first = queue.enqueue(payload)

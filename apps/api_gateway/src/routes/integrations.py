@@ -118,8 +118,20 @@ async def google_callback(
 
 @router.get("/integrations/status")
 async def integration_status(user: User = Depends(current_user)) -> dict[str, Any]:
-    """Return the caller's integration status (no secrets)."""
-    return await get_integration_status(user_id=user.id, provider="google")
+    """Return the caller's integration status (no secrets).
+
+    When the user has never connected Google, return an explicit disconnected
+    payload instead of ``None`` so response validation does not 500.
+    """
+    status = await get_integration_status(user_id=user.id, provider="google")
+    if status is None:
+        return {
+            "provider": "google",
+            "status": "disconnected",
+            "has_token": False,
+            "account_email": None,
+        }
+    return status
 
 
 @router.delete("/integrations/google")

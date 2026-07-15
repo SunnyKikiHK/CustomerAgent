@@ -175,6 +175,7 @@ class IntentRecognizer:
                 model=self.model,
                 temperature=0.1,
                 max_tokens=256,
+                reasoning=False,
                 name="conversation.intent.llm",
             )
             raw = response.text
@@ -297,6 +298,7 @@ class IntentRecognizer:
                 model=self.model,
                 temperature=0.0,
                 max_tokens=320,
+                reasoning=False,
                 name="conversation.intent.entities",
             )
             raw = response.text

@@ -109,7 +109,20 @@ class SignalOrchestrator(BaseOrchestrator):
 
         results: list[dict[str, Any]] = []
         for index, write in enumerate(decision.approved_external_writes):
-            action_name, arguments = _parse_approved_write(write)
+            try:
+                action_name, arguments = _parse_approved_write(write)
+            except ValueError as exc:
+                # A malformed draft must not crash the whole signal turn; record
+                # the failure and continue with any remaining approved writes.
+                results.append(
+                    {
+                        "success": False,
+                        "status": "invalid_write",
+                        "error": str(exc),
+                        "index": index,
+                    }
+                )
+                continue
             approval_id = _stable_digest(
                 {
                     "tenant_id": ctx.tenant_id,

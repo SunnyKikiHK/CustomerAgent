@@ -6,14 +6,23 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 
 WORKDIR /app
 
+# Tool gateway needs the shared app deps (asyncpg/redis/httpx/cryptography)
+# plus the MCP runtime — use the monorepo requirements so imports of
+# packages.db / packages.redis / packages.auth resolve at runtime.
+COPY requirements.txt /tmp/requirements.txt
 COPY apps/tool_gateway/requirements.txt /tmp/tool-gateway-requirements.txt
 RUN pip install --no-cache-dir --upgrade pip \
+    && pip install --no-cache-dir -r /tmp/requirements.txt \
     && pip install --no-cache-dir -r /tmp/tool-gateway-requirements.txt
 
 COPY apps/__init__.py /app/apps/__init__.py
 COPY apps/tool_gateway /app/apps/tool_gateway
 COPY packages/__init__.py /app/packages/__init__.py
+COPY packages/db /app/packages/db
+COPY packages/redis /app/packages/redis
+COPY packages/auth /app/packages/auth
 COPY packages/tool_system /app/packages/tool_system
+COPY packages/observability /app/packages/observability
 
 EXPOSE 8002
 

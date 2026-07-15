@@ -37,6 +37,21 @@ DEMO_TENANT_ID_2 = "33333333-3333-3333-3333-333333333333"
 
 async def seed(extra_tenants: list[str]) -> None:
     """Create the demo CSM and assign them to the demo tenants."""
+    from packages.db.src import execute
+
+    # Ensure the second demo tenant exists so the multi-tenant membership insert
+    # does not fail FK on a fresh DB that only has the primary demo tenant.
+    await execute(
+        """
+        insert into tenants (id, name, plan)
+        values ($1::uuid, $2, 'growth')
+        on conflict (id) do nothing
+        """,
+        DEMO_TENANT_ID_2,
+        "Demo Tenant 2",
+        tenant_id=DEMO_TENANT_ID_2,
+    )
+
     user = await create_user(
         email=DEMO_CSM_EMAIL,
         password=DEMO_CSM_PASSWORD,

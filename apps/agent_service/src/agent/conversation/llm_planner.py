@@ -118,6 +118,7 @@ async def select_roles(
                 model=model,
                 temperature=0.0,
                 max_tokens=256,
+                reasoning=False,
                 name="conversation.planner.select_roles",
             ),
             timeout=timeout,

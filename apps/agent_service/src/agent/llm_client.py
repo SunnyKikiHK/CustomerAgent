@@ -67,6 +67,7 @@ class LLMClient:
         model: str | None = None,
         temperature: float = 0.2,
         max_tokens: int | None = None,
+        reasoning: bool | None = None,
         trace_id: str | None = None,
         name: str = "agent.llm.complete",
         metadata: Mapping[str, Any] | None = None,
@@ -89,6 +90,8 @@ class LLMClient:
         }
         if max_tokens is not None:
             request["max_tokens"] = max_tokens
+        if reasoning is not None:
+            request["reasoning"] = reasoning
 
         try:
             completion = await self._client.chat.completions.create(**cast(Any, request))

@@ -172,13 +172,16 @@ async def mark_report_status(
 ) -> bool:
     """Transition a report's status (approved/delivered/failed)."""
     try:
+        # Cast $2 explicitly: asyncpg otherwise sees it as both text (from the
+        # ``= 'delivered'`` comparison) and varchar (column assignment) and raises
+        # AmbiguousParameterError.
         result = await execute(
             """
             update qbr_reports
-            set status = $2,
-                recipient_email = coalesce($3, recipient_email),
-                error = $4,
-                delivered_at = case when $2 = 'delivered' then now() else delivered_at end
+            set status = $2::text,
+                recipient_email = coalesce($3::text, recipient_email),
+                error = $4::text,
+                delivered_at = case when $2::text = 'delivered' then now() else delivered_at end
             where id = $1::uuid
             """,
             report_id,

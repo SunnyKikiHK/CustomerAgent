@@ -169,6 +169,13 @@ class SkillManager:
 
     @staticmethod
     def _split_front_matter(raw: str) -> tuple[dict[str, Any], str]:
+        """Parse YAML-ish front matter without requiring PyYAML.
+
+        Supports single-line values and the common multi-line folded/literal
+        forms used in SKILL.md files (``description: >`` / ``|`` followed by
+        indented continuation lines). A bare ``>`` / ``|`` alone is never kept
+        as the value.
+        """
         text = raw.lstrip()
         if not text.startswith("---"):
             return {}, raw
@@ -178,14 +185,53 @@ class SkillManager:
 
         meta: dict[str, Any] = {}
         end_idx: int | None = None
+        current_key: str | None = None
+        current_parts: list[str] = []
+        folding = False
+
+        def _flush() -> None:
+            nonlocal current_key, current_parts, folding
+            if current_key is None:
+                return
+            if folding:
+                value = " ".join(part.strip() for part in current_parts if part.strip())
+            else:
+                value = "\n".join(current_parts).strip() if current_parts else ""
+            meta[current_key] = value
+            current_key = None
+            current_parts = []
+            folding = False
+
         for idx, line in enumerate(lines[1:], start=1):
             if line.strip() == "---":
                 end_idx = idx
                 break
-            if ":" not in line:
+            # Indented continuation of a multi-line value.
+            if current_key is not None and (line.startswith(" ") or line.startswith("\t")):
+                current_parts.append(line.strip())
                 continue
+            if ":" not in line:
+                # Non-key, non-indented line inside a block: treat as continuation.
+                if current_key is not None:
+                    current_parts.append(line.strip())
+                continue
+            _flush()
             key, value = line.split(":", 1)
-            meta[key.strip()] = value.strip().strip("\"'")
+            key = key.strip()
+            value = value.strip().strip("\"'")
+            if value in {">", "|", ">-", "|-", ">+", "|+"}:
+                current_key = key
+                current_parts = []
+                folding = value.startswith(">")
+                continue
+            if value == "":
+                # Possibly a multi-line block without an explicit fold indicator.
+                current_key = key
+                current_parts = []
+                folding = True
+                continue
+            meta[key] = value
+        _flush()
         if end_idx is None:
             return {}, raw
         return meta, "\n".join(lines[end_idx + 1 :])

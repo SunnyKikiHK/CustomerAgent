@@ -107,21 +107,36 @@ class TenantSignalScanWorkflow:
         )
 
         started: list[str] = []
+        skipped: list[str] = []
         for payload in detected:
             signal_key = _signal_key(payload)
             child_id = f"signal:{tenant_id}:{signal_key}"
             # Deterministic child id + reject-duplicate semantics: if a signal is
             # already being processed from an overlapping scan, starting it again
-            # is a no-op rather than duplicate work.
-            await workflow.start_child_workflow(
-                ProcessSignalWorkflow.run,
-                payload,
-                id=child_id,
-                parent_close_policy=ParentClosePolicy.ABANDON,
-            )
-            started.append(child_id)
+            # is a no-op rather than duplicate work / parent failure.
+            try:
+                await workflow.start_child_workflow(
+                    ProcessSignalWorkflow.run,
+                    payload,
+                    id=child_id,
+                    parent_close_policy=ParentClosePolicy.ABANDON,
+                )
+                started.append(child_id)
+            except Exception as exc:
+                # WorkflowAlreadyStartedError (and stringified variants) means the
+                # signal is already in flight — count as skipped, keep scanning.
+                name = type(exc).__name__
+                if "AlreadyStarted" in name or "already started" in str(exc).lower():
+                    skipped.append(child_id)
+                    continue
+                raise
 
-        return {"tenant_id": tenant_id, "detected": len(detected), "started": started}
+        return {
+            "tenant_id": tenant_id,
+            "detected": len(detected),
+            "started": started,
+            "skipped": skipped,
+        }
 
 
 def _signal_key(payload: dict[str, Any]) -> str:
