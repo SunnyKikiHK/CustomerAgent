@@ -203,6 +203,7 @@ async def _try_llm_selection(
             catalog_text=catalog_text,
             llm_client=client,
             model=config.planner_model,
+            timeout=12.0,
         )
     except Exception:  # noqa: BLE001 - any planner error must fall back
         return None
@@ -236,6 +237,8 @@ def _assemble_plan(
                 skill=PLAYBOOK_BRIEF,
                 input={"message": message, "query": message},
                 allowed_tools=["query_playbooks"],
+                max_react_steps=2,
+                max_tokens=_ANSWER_MAX_TOKENS,
             )
         )
         depends_on = ["playbook"]
@@ -287,6 +290,14 @@ def _needs_playbook(message: str, intent: IntentResult) -> bool:
     return intent.intent in {IntentCategory.BILLING, IntentCategory.ACCOUNT}
 
 
+#: Conversation answers are single-shot or one tool lookup; cap react steps and
+#: tokens well below the subagent defaults (6 steps / 2000 tok) to bound tail
+#: latency without changing the pipeline. Playbook context arrives via a
+#: dependency, so the answer rarely needs more than 2 steps.
+_ANSWER_MAX_REACT_STEPS = 3
+_ANSWER_MAX_TOKENS = 900
+
+
 def _answer_task(
     role: AgentRole,
     message: str,
@@ -308,6 +319,8 @@ def _answer_task(
         },
         allowed_tools=_tools_for_role(role),
         depends_on=list(depends_on),
+        max_react_steps=_ANSWER_MAX_REACT_STEPS,
+        max_tokens=_ANSWER_MAX_TOKENS,
     )
 
 

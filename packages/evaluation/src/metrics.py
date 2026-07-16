@@ -22,10 +22,16 @@ from typing import Iterable
 
 from packages.observability.src.collector import SpanRecord
 
-#: Span-name prefixes grouped into the three reported phases.
-_REASONING_PREFIXES = ("planner.", "conversation.run", "signal.process", "qbr.generate")
+#: Outer wrapper spans that *contain* the phase spans below. Counting them in
+#: the breakdown would double-count all nested time, so they are excluded from
+#: the reasoning/tool/LLM split (their duration is still the end-to-end latency).
+#: ``executor.delegate`` wraps the subagent + tool spans, so it is a wrapper too.
+_WRAPPER_PREFIXES = ("conversation.run", "signal.process", "qbr.generate", "executor.delegate")
+
+#: Span-name prefixes grouped into the three reported phases (leaf spans only).
+_REASONING_PREFIXES = ("planner.",)
 _TOOL_PREFIXES = ("tool.",)
-_LLM_PREFIXES = ("compliance.review", "subagent", "executor.delegate", "evaluation.judge")
+_LLM_PREFIXES = ("compliance.review", "subagent", "evaluation.judge")
 
 
 def _percentile(values: list[float], pct: float) -> float:
@@ -40,7 +46,13 @@ def _percentile(values: list[float], pct: float) -> float:
 
 
 def _phase_of(span_name: str) -> str:
-    """Classify a span into reasoning / tool / llm / other."""
+    """Classify a span into wrapper / reasoning / tool / llm / other.
+
+    ``wrapper`` spans are excluded from the phase breakdown (they contain the
+    other spans and would double-count). Wrapper is checked first.
+    """
+    if span_name.startswith(_WRAPPER_PREFIXES):
+        return "wrapper"
     if span_name.startswith(_TOOL_PREFIXES):
         return "tool"
     if span_name.startswith(_LLM_PREFIXES):
@@ -124,7 +136,10 @@ def build_metrics(samples: Iterable[RunSample]) -> MetricsReport:
     phase_ms: dict[str, float] = {"reasoning": 0.0, "tool": 0.0, "llm": 0.0, "other": 0.0}
     for sample in samples:
         for span in sample.spans:
-            phase_ms[_phase_of(span.name)] += span.duration_ms
+            phase = _phase_of(span.name)
+            if phase == "wrapper":
+                continue  # excluded: contains the leaf spans below
+            phase_ms[phase] += span.duration_ms
     phase_ms = {k: round(v, 1) for k, v in phase_ms.items()}
     total_phase = sum(phase_ms.values())
     phase_pct = (
