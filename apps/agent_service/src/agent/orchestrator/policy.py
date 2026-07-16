@@ -34,10 +34,16 @@ def plan_requires_critic(plan: OrchestratorPlan) -> bool:
     return any(task.role in _WRITE_OR_VISIBLE_ROLES for task in plan.tasks)
 
 
+#: Roles that ALWAYS force the compliance critic, even when a plan opts out via
+#: ``requires_critic=False``. Money movement (billing) and human-handoff
+#: (escalation) turns, plus any external-write drafter, must always be reviewed.
+#: General/technical informational answers are NOT here: a plan may skip the
+#: critic for them (with ``skip_critic_for_simple``) to cut a round-trip, since
+#: they perform no external writes and are lower risk.
 _WRITE_OR_VISIBLE_ROLES = {
     AgentRole.OUTREACH_DRAFT,
-    AgentRole.GENERAL,
-    AgentRole.TECHNICAL,
+    AgentRole.NPS_OUTREACH,
+    AgentRole.QBR_REPORT,
     AgentRole.BILLING,
     AgentRole.ESCALATION,
 }

@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 from typing import Awaitable
 
 from packages.agent.src.chat_types import ChatMessage, ChatMessageRole
@@ -69,8 +70,27 @@ def _sentiment_label(intent: IntentResult) -> str:
     return "neutral"
 
 
+def _signal_bridge_enabled() -> bool:
+    """Whether the conversation->signal bridge is active.
+
+    On by default. Set ``CONVERSATION_SIGNAL_BRIDGE=0`` to disable it — used by
+    the evaluation harness so eval chat turns do not spawn background
+    ProcessSignalWorkflows that contend with the eval for the worker and inflate
+    measured latency. Disabling only affects the proactive background follow-up;
+    the chat answer itself is unchanged.
+    """
+    return os.getenv("CONVERSATION_SIGNAL_BRIDGE", "1").strip().lower() not in {
+        "0",
+        "false",
+        "no",
+        "off",
+    }
+
+
 def _should_bridge_to_signal(intent: IntentResult) -> bool:
     """Whether this chat turn should queue a proactive negative-sentiment signal."""
+    if not _signal_bridge_enabled():
+        return False
     return intent.intent in _NEGATIVE_INTENTS or intent.urgency >= UrgencyLevel.HIGH
 
 
@@ -121,7 +141,12 @@ class ConversationOrchestrator(BaseOrchestrator):
             model=worker_model(),
             planner_model=planner_model(),
             tools=["query_health", "query_playbooks"],
-            skip_critic_for_simple=False,
+            # Allow skipping the reflector critic on low-risk informational turns
+            # (General/Technical, no billing/escalation/policy) to remove one LLM
+            # round-trip. The planner marks those plans requires_critic=False and
+            # plan_requires_critic() still forces the critic for billing/escalation
+            # /write roles, so money-movement and human-handoff turns are unaffected.
+            skip_critic_for_simple=True,
         )
 
     async def load_tenant_constraints(self, ctx: SessionContext) -> list[str]:

@@ -117,14 +117,18 @@ async def build_conversation_plan(
     constraints = build_global_constraints(config, tenant_constraints)
 
     # Fast path: simple, low-urgency turns go straight to the general agent
-    # (cheap deterministic path, no LLM planner call).
+    # (cheap deterministic path, no LLM planner call). These greeting/feedback/
+    # query turns perform no external writes and no money/handoff action, so the
+    # plan opts out of the reflector critic (``requires_critic=False``); the
+    # orchestrator only actually skips it when ``skip_critic_for_simple`` is on
+    # and ``plan_requires_critic`` agrees (which excludes billing/escalation).
     if intent.intent in _FAST_PATH_INTENTS and intent.urgency <= UrgencyLevel.MEDIUM:
         answer = _answer_task(AgentRole.GENERAL, message, intent, depends_on=[])
         return (
             OrchestratorPlan(
                 goal="Answer a simple customer chat turn",
                 tasks=[answer],
-                requires_critic=True,
+                requires_critic=False,
                 global_constraints=constraints,
                 reasoning_summary="Conversation fast path routed to GeneralAgent only",
             ),
@@ -253,10 +257,24 @@ def _assemble_plan(
         tasks.append(_answer_task(role, message, intent, depends_on=depends_on, task_id=task_id))
 
     escalated = AgentRole.ESCALATION in roles or intent.urgency == UrgencyLevel.CRITICAL
+    # Opt out of the reflector critic only for low-risk informational turns:
+    # General/Technical answers, no billing/escalation, no policy playbook, and
+    # non-critical urgency. Billing/escalation/policy turns keep the critic. The
+    # orchestrator still only skips when ``skip_critic_for_simple`` is enabled and
+    # ``plan_requires_critic`` agrees, so this is a safe upper bound.
+    low_risk_roles = all(
+        role in {AgentRole.GENERAL, AgentRole.TECHNICAL} for role in roles
+    )
+    requires_critic = not (
+        low_risk_roles
+        and not needs_playbook
+        and not escalated
+        and intent.urgency <= UrgencyLevel.MEDIUM
+    )
     return OrchestratorPlan(
         goal="Answer a customer chat turn with selected specialists",
         tasks=tasks,
-        requires_critic=True,
+        requires_critic=requires_critic,
         global_constraints=constraints,
         reasoning_summary=(
             f"Conversation planner ({source}) selected "

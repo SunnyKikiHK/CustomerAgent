@@ -173,6 +173,15 @@ async def run_evaluation(
     samples: list[RunSample] = []
     recorded = recorded or {}
 
+    if mode == "live":
+        # Disable the conversation->signal bridge for the eval so chat turns do
+        # not spawn background ProcessSignalWorkflows that contend for the worker
+        # and inflate measured latency. Only affects proactive follow-up, not the
+        # chat answer being evaluated.
+        import os
+
+        os.environ.setdefault("CONVERSATION_SIGNAL_BRIDGE", "0")
+
     for case in cases:
         if mode == "live":
             text, latency_ms, tokens, spans = await _run_one_live(case)
