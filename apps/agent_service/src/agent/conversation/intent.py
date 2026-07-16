@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 from dataclasses import dataclass
 from enum import Enum
 from typing import Any
@@ -81,7 +82,9 @@ class IntentRecognizer:
         confidence_threshold: float = 0.5,
         embedding_enabled: bool = True,
     ) -> None:
-        self.model = model or worker_model()
+        # Intent classification is a latency-sensitive, low-stakes JSON call:
+        # prefer the mini model, fall back to the worker model when unset.
+        self.model = model or os.getenv("OPENROUTER_MINI_MODEL") or worker_model()
         self.llm_client = llm_client or LLMClient(default_model=self.model)
         self.threshold = confidence_threshold
         self.embedding_enabled = embedding_enabled

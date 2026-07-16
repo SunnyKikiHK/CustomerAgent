@@ -67,7 +67,10 @@ class ReActLoop:
                 await self._execute_tool_calls(parsed["tool_calls"])
                 continue
 
-            last_markdown = parsed["markdown"] or response.text
+            # Use only the parsed markdown. The parser already de-fences and, for
+            # non-JSON replies, puts the cleaned text in markdown — so never fall
+            # back to response.text here (that would leak a raw JSON/tool blob).
+            last_markdown = parsed["markdown"]
             last_data = parsed["data"]
             return SubagentResult(
                 task_id=task.id,
@@ -128,10 +131,15 @@ class ReActLoop:
                 }
             }
         """
+        cleaned = _strip_code_fence(text)
         try:
-            payload = json.loads(text)
+            payload = json.loads(cleaned)
         except json.JSONDecodeError:
-            return {"markdown": text, "data": {}, "tool_calls": []}
+            # Not a JSON object: treat the (de-fenced) text as the markdown reply.
+            # Never surface a raw ```json blob to the customer.
+            return {"markdown": cleaned, "data": {}, "tool_calls": []}
+        if not isinstance(payload, dict):
+            return {"markdown": cleaned, "data": {}, "tool_calls": []}
 
         tool_calls = payload.get("tool_calls", [])
         if not isinstance(tool_calls, list):
@@ -192,6 +200,25 @@ class ReActLoop:
                 result_redacted=_redact_for_audit(result),
             )
         )
+
+
+def _strip_code_fence(text: str) -> str:
+    """Strip a leading/trailing markdown code fence so ```json blocks parse.
+
+    Models often wrap their JSON in ```json ... ``` fences. Without stripping,
+    json.loads fails and the whole fenced blob would leak to the customer as the
+    reply. Returns the inner content (trimmed); leaves unfenced text unchanged.
+    """
+    stripped = (text or "").strip()
+    if not stripped.startswith("```"):
+        return stripped
+    # Drop the opening fence line (``` or ```json) and the closing fence.
+    lines = stripped.splitlines()
+    if lines and lines[0].startswith("```"):
+        lines = lines[1:]
+    if lines and lines[-1].strip().startswith("```"):
+        lines = lines[:-1]
+    return "\n".join(lines).strip()
 
 
 def _redact_for_audit(value: dict[str, Any]) -> dict[str, Any]:

@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
+import os
 from typing import Any
 
 from packages.knowledge_service.src.retrieve import retrieve_documents
@@ -24,7 +25,9 @@ async def rewrite_query(
     n: int = 3,
 ) -> list[str]:
     """Expand a query into multiple search angles."""
-    model = model or worker_model()
+    # Query rewrite is a latency-sensitive, low-stakes reformulation: prefer the
+    # mini model, fall back to the worker model when unset.
+    model = model or os.getenv("OPENROUTER_MINI_MODEL") or worker_model()
     client = llm_client or LLMClient(default_model=model)
     prompt = (
         f"You are a search query optimizer for a retrieval system.\n"
@@ -71,7 +74,8 @@ async def rerank_candidates(
     if len(items) <= top_k:
         return items
 
-    model = model or worker_model()
+    # Reranking is a bounded ordering task: use the mini model.
+    model = model or os.getenv("OPENROUTER_MINI_MODEL") or worker_model()
     client = llm_client or LLMClient(default_model=model)
     items_text = "\n".join(
         f"{index}. {json.dumps(item, default=str)[:200]}"
@@ -110,7 +114,8 @@ async def retrieve_with_optimization(
     model: str | None = None,
 ) -> ToolCallResult:
     """Run rewrite -> parallel recall -> merge/dedupe -> rerank -> fallback."""
-    model = model or worker_model()
+    # Rewrite + rerank are latency-sensitive helper calls: use the mini model.
+    model = model or os.getenv("OPENROUTER_MINI_MODEL") or worker_model()
     layer = get_mcp_tool_layer()
     # step 1: expand one query into multiple retrieval angles
     sub_queries = await rewrite_query(query, llm_client=llm_client, model=model, n=3)

@@ -16,6 +16,7 @@ from __future__ import annotations
 import os
 
 from packages.agent.src.config import AgentConfig
+from packages.agent.src.models import worker_model
 from packages.agent.src.orchestration_types import OrchestratorPlan
 from packages.agent.src.subagent_types import AgentRole, SubagentTask
 from packages.agent.src.types import LLMUsage
@@ -193,16 +194,20 @@ async def _try_llm_selection(
 ) -> PlannerDecision | None:
     """Run the LLM planner; return None on any failure so the caller falls back."""
     try:
+        # Role selection is a bounded classification into a fixed allowlist:
+        # a latency-sensitive, low-stakes call, so use the mini model (fall back
+        # to the worker model when unset) rather than the large planner model.
+        selection_model = os.getenv("OPENROUTER_MINI_MODEL") or worker_model()
         catalog = build_capability_catalog(config.tenant_id)
         catalog_text = render_catalog_for_prompt(catalog)
-        client = llm_client or LLMClient(default_model=config.planner_model)
+        client = llm_client or LLMClient(default_model=selection_model)
         return await select_roles(
             message=message,
             history=history,
             intent=intent,
             catalog_text=catalog_text,
             llm_client=client,
-            model=config.planner_model,
+            model=selection_model,
             timeout=12.0,
         )
     except Exception:  # noqa: BLE001 - any planner error must fall back

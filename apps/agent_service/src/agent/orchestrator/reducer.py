@@ -24,6 +24,13 @@ _CUSTOMER_FACING_ROLES: frozenset[AgentRole] = frozenset(
     }
 )
 
+#: Shown when the pipeline approved the turn but produced no customer-facing
+#: answer text. Never leak the critic's internal feedback to the customer.
+_EMPTY_ANSWER_FALLBACK = (
+    "Thanks for reaching out. Could you share a bit more detail so I can help "
+    "with the right next step?"
+)
+
 
 def extract_proposed_external_writes(results: list[SubagentResult]) -> list[dict[str, Any]]:
     """Collect proposed write payloads from subagent result data."""
@@ -92,7 +99,9 @@ def finalize_decision(
             ),
         )
 
-    response_text = customer_facing_markdown(results) or review.feedback
+    # Never surface the critic's internal feedback to the customer: when no
+    # answer-role markdown is available, fall back to a safe generic reply.
+    response_text = customer_facing_markdown(results) or _EMPTY_ANSWER_FALLBACK
     return FinalDecision(
         action="emit_or_execute_approved_payload",
         response_text=response_text,

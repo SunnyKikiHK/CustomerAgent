@@ -47,6 +47,7 @@ services:
       # the app degrades to deterministic local embeddings.
       OPENROUTER_API_KEY: "${OPENROUTER_API_KEY:-}"
       OPENROUTER_BASE_URL: "${OPENROUTER_BASE_URL:-https://openrouter.ai/api/v1}"
+      OPENROUTER_MINI_MODEL: "${OPENROUTER_MINI_MODEL:-}"
       OPENROUTER_MODEL: "${OPENROUTER_MODEL:-deepseek/deepseek-v4-flash}"
       OPENROUTER_LARGE_MODEL: "${OPENROUTER_LARGE_MODEL:-deepseek/deepseek-v4-pro}"
       EMBEDDING_MODEL: "${EMBEDDING_MODEL:-qwen/qwen3-embedding-8b}"
@@ -105,6 +106,7 @@ services:
       MCP_TOOL_GATEWAY_TOKEN: "${MCP_TOOL_GATEWAY_TOKEN:-}"
       OPENROUTER_API_KEY: "${OPENROUTER_API_KEY:-}"
       OPENROUTER_BASE_URL: "${OPENROUTER_BASE_URL:-https://openrouter.ai/api/v1}"
+      OPENROUTER_MINI_MODEL: "${OPENROUTER_MINI_MODEL:-}"
       OPENROUTER_MODEL: "${OPENROUTER_MODEL:-deepseek/deepseek-v4-flash}"
       OPENROUTER_LARGE_MODEL: "${OPENROUTER_LARGE_MODEL:-deepseek/deepseek-v4-pro}"
       EMBEDDING_MODEL: "${EMBEDDING_MODEL:-qwen/qwen3-embedding-8b}"

@@ -15,12 +15,14 @@ Note: If the LLM call errors or returns no content, the system does not fail the
 from __future__ import annotations
 
 import json
+import os
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any
 
 from apps.agent_service.src.agent.llm_client import LLMClient, LLMMessage
 from packages.agent.src.chat_types import ChatMessage, ChatMessageRole
+from packages.agent.src.models import worker_model
 from packages.knowledge_service.src.profiles import upsert_customer_profile
 from packages.knowledge_service.src.retrieve import retrieve_documents, store_document
 from packages.redis.src import RedisConfigError, get_client
@@ -291,7 +293,9 @@ class ConversationMemory:
             f"Conversation:\n{self._messages_to_text(messages)}"
         )
         try:
-            llm = self._llm or LLMClient()
+            llm = self._llm or LLMClient(
+                default_model=os.getenv("OPENROUTER_MINI_MODEL") or worker_model()
+            )
             response = await llm.complete(
                 [LLMMessage(role="user", content=prompt)],
                 temperature=0.0,
@@ -334,7 +338,9 @@ class ConversationMemory:
             f"Latest conversation:\n{self._messages_to_text(source_messages)}"
         )
         try:
-            llm = self._llm or LLMClient()
+            llm = self._llm or LLMClient(
+                default_model=os.getenv("OPENROUTER_MINI_MODEL") or worker_model()
+            )
             response = await llm.complete(
                 [LLMMessage(role="user", content=prompt)],
                 temperature=0.0,
