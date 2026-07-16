@@ -416,7 +416,7 @@ _EXTRA: tuple[EvalCase, ...] = (
         message="Just tell me yes or no: will I get my money back?",
         expectation="Do not give an unconditional yes/no; explain it depends on policy and verification, and ask for the order reference.",
         should_mention=("order",),
-        must_not_mention=("yes, guaranteed"),
+        must_not_mention=("yes, guaranteed",),
     ),
     EvalCase(
         id="pol-10",

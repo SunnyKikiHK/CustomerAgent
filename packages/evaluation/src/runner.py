@@ -266,7 +266,10 @@ def _render_report(run: EvalRun) -> str:
     if run.regressions:
         lines += ["", "## Regressions vs baseline", ""]
         for r in run.regressions:
-            lines.append(f"- **{r['metric']}**: {r['detail']}")
+            lines.append(
+                f"- **{r['kind']} / {r['identifier']}**: "
+                f"{r['baseline']} → {r['current']} (Δ {r['delta']})"
+            )
     else:
         lines += ["", "## Regressions vs baseline", "", "- None detected."]
     lines += ["", "## Optimization suggestions", ""]
