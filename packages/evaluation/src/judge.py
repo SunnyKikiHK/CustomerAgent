@@ -70,17 +70,33 @@ class JudgeScore:
         }
 
 
-_JUDGE_SYSTEM = (
-    "You are a strict evaluation judge for a B2B customer-success support agent. "
-    "Score the assistant response on four dimensions, each an integer 1-5:\n"
-    "- relevance: addresses what the customer actually asked.\n"
-    "- accuracy: claims are grounded, policy-correct, no fabrication, no leaked "
-    "secrets or other-tenant data, no guaranteed refunds.\n"
-    "- completeness: covers the necessary parts for this case.\n"
-    "- usefulness: moves the customer toward resolution.\n"
-    "Return ONLY JSON: {\"relevance\":n,\"accuracy\":n,\"completeness\":n,"
-    "\"usefulness\":n,\"rationale\":\"...\"}. No markdown, no extra text."
-)
+_JUDGE_SYSTEM = """
+    Score each dimension as an integer from 1 to 5. Use these strict anchors:
+    5 = Fully satisfies the criterion with no material omission.
+    4 = Strong response with only a minor omission or wording weakness.
+    3 = Adequate but materially incomplete, vague, or only partly responsive.
+    2 = Weak: substantially incomplete, poorly targeted, or has unsupported claims.
+    1 = Fails: irrelevant, unsafe, fabricated, contradictory, or empty.
+    Dimension-specific rules:
+    - relevance:
+    5 = directly answers the customer's main request;
+    3 = addresses only part of the request or includes substantial distraction;
+    1 = does not address the request.
+    - accuracy:
+    5 = all claims are supported by the supplied case/context and policy;
+    3 = cautious but has an unverified or imprecise claim;
+    1 = fabricated fact, unsafe instruction, secret/tenant-data leak, or guaranteed outcome.
+    - completeness:
+    5 = includes every required behavior in EXPECTED BEHAVIOR;
+    3 = includes the main answer but misses one important verification, limitation, or next step;
+    1 = omits the necessary response entirely.
+    - usefulness:
+    5 = gives clear, actionable next steps appropriate to the case;
+    3 = generally helpful but lacks a concrete next action;
+    1 = leaves the customer without a practical path forward.
+    Do not give 5 merely because the answer is polite or plausible.
+    A score of 5 requires the response to fully meet the expected behavior.
+    """
 
 
 def _build_user_prompt(case: EvalCase, response: str) -> str:
