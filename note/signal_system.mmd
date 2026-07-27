@@ -1,0 +1,65 @@
+flowchart TD
+    A[Signal source] --> B{Source type}
+    B -->|Dashboard scan| C[POST /signals/scan]
+    B -->|Customer complaint or escalation| D[Conversation-to-signal bridge]
+    B -->|Manual API request| E[POST /signals]
+
+    C --> F[Renewal-risk and low-health detectors]
+    F --> G[Signal payload]
+    D --> G
+    E --> G
+
+    G --> H[Start Temporal ProcessSignalWorkflow]
+    H --> I[record_signal_queued activity]
+    I --> J[Normalize payload and calculate dedupe key]
+    J --> K[Persist signal as queued]
+    K --> L[mark_signal_processing activity]
+    L --> M[process_signal activity]
+
+    M --> N[SignalOrchestrator]
+    N --> O[Load tenant config, constraints, customer memory]
+    O --> P[Signal planner]
+    P --> Q[Build dependency-aware plan]
+
+    Q --> R[DelegationManager]
+    R --> S[Health analysis task]
+    R --> T[Playbook retrieval task]
+    S --> U[Outreach draft task]
+    T --> U
+
+    S --> V[ReAct tool use: query health]
+    T --> W[Retrieval optimization]
+    W --> W1[LLM query rewrite]
+    W1 --> W2[Parallel pgvector playbook recall]
+    W2 --> W3[Merge/dedupe and LLM rerank]
+    U --> X[Draft results]
+
+    X --> Y[ComplianceCriticAgent]
+    Y --> Z{Approved?}
+    Z -->|No| ZA[Retry plan once with stricter compliance constraint]
+    ZA --> Y
+    Z -->|Yes| ZB[Finalize decision]
+
+    ZB --> ZC[Update customer signal profile]
+    ZC --> ZD{Approved external write?}
+    ZD -->|Yes| ZE[Persist action approval]
+    ZE --> ZF[Execute MCP action through tool gateway]
+    ZF --> ZG[Email provider / CSM notification]
+    ZD -->|No| ZH[Skip external action]
+    ZG --> ZI[mark_signal_done activity]
+    ZH --> ZI
+    ZI --> ZJ[Persist final signal result]
+
+    M -. Temporal retries .-> M
+    N -. telemetry .-> ZK[Structured logs + optional Langfuse / OpenTelemetry]
+    R -. role success and latency .-> ZL[PerformanceMonitor]
+    ZL -. routing penalties .-> R
+
+    classDef async fill:#FFF3CD,stroke:#856404,color:#111;
+    classDef safety fill:#F8D7DA,stroke:#842029,color:#111;
+    classDef storage fill:#D1E7DD,stroke:#0F5132,color:#111;
+    classDef external fill:#CFE2FF,stroke:#084298,color:#111;
+    class H,M async;
+    class Y,ZA,ZE safety;
+    class K,ZI,ZJ storage;
+    class ZF,ZG external;

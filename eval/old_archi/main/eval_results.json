@@ -1,0 +1,292 @@
+{
+  "summary": {
+    "run_id": "09ca0cf4ec01",
+    "mode": "live",
+    "cases": 12,
+    "passed": 6,
+    "pass_rate": 0.5,
+    "dimension_means": {
+      "relevance": 3.417,
+      "accuracy": 3.417,
+      "completeness": 3.167,
+      "usefulness": 3.167
+    },
+    "by_category": {
+      "ambiguous": {
+        "n": 8,
+        "passed": 4,
+        "pass_rate": 0.5,
+        "mean": 3.312
+      },
+      "edge": {
+        "n": 4,
+        "passed": 2,
+        "pass_rate": 0.5,
+        "mean": 3.25
+      }
+    }
+  },
+  "metrics": {
+    "count": 12,
+    "successes": 6,
+    "success_rate": 0.5,
+    "latency_ms": {
+      "p50": 37140.98,
+      "p95": 145451.72,
+      "avg": 48429.1
+    },
+    "tokens_per_successful_task": 4407.8,
+    "cost_per_resolution_usd": 0.0,
+    "total_tokens": 59629,
+    "time_breakdown_ms": {
+      "reasoning": 758598.8,
+      "tool": 26117.6,
+      "llm": 180175.2,
+      "other": 0.0
+    },
+    "time_breakdown_pct": {
+      "reasoning": 78.6,
+      "tool": 2.7,
+      "llm": 18.7,
+      "other": 0.0
+    }
+  },
+  "regressions": [],
+  "suggestions": [
+    "Weakest dimension 'completeness' (3.167): Add checklists to specialist skills (e.g. always request order id) so answers cover required parts.",
+    "Category 'ambiguous' pass-rate 0.5: review those cases; add targeted skill guidance.",
+    "Category 'edge' pass-rate 0.5: review those cases; add targeted skill guidance.",
+    "'reasoning' is 78.6% of measured time: Planning dominates: consider the deterministic planner fast-path for simple turns.",
+    "P95 latency 145451.72ms is high (>20s): reduce max_react_steps, disable reasoning on the hot path, or shrink the planner/critic model."
+  ],
+  "results": [
+    {
+      "case_id": "amb-01",
+      "category": "ambiguous",
+      "message": "it's broken",
+      "response": "```json\n{\n  \"markdown\": \"I understand you're frustrated, and I'm sorry the product isn't meeting your expectations. Let's figure out what's going wrong.\\n\\nTo help you effectively, I need a bit more information:\\n\\n1. **What exactly is broken?**\\n   - Are you getting an error message? If so, what does it say?\\n   - Is the page not loading, a feature not working, or something else?\\n\\n2. **When did this start?**\\n   - Has it ever worked before?\\n   - Did this start after a recent update or change?\\n\\n3. **What environment are you using?**\\n   - Browser (Chrome, Safari, etc.) and version?\\n   - Mobile app or desktop?\\n   - Operating system?\\n\\n4. **Is this affecting just you, or others too?**\\n\\nOnce you share these details, I can give you step-by-step troubleshooting. In the meantime, you can try:\\n- Refreshing the page or restarting the app.\\n- Clearing your browser cache or app data.\\n- Checking your internet connection.\\n\\nI'm here to help get this sorted.\",\n  \"data\": {\n    \"customer_id\": \"22222222-2222-2222-2222-222222222222\",\n    \"tenant_id\": \"11111111-1111-1111-1111-111111111111\",\n    \"intent\": \"technical\",\n    \"urgency\": 1,\n    \"sentiment_signals\": [\"frustrated\"],\n    \"risk_signals\": [\"customer is inquiring about refund eligibility for usage-based charges, indicating potential dissatisfaction with billing\", \"uncertainty about charges\", \"customer expressed anger and stated product is too bad, indicating high churn risk\", \"dissatisfaction with product\"],\n    \"issue_types\"",
+      "latency_ms": 51691.6,
+      "tokens": 4531,
+      "score": {
+        "relevance": 5.0,
+        "accuracy": 2.0,
+        "completeness": 4.0,
+        "usefulness": 4.0,
+        "mean": 3.75,
+        "passed": true,
+        "method": "llm",
+        "hard_violation": null,
+        "rationale": "The response appropriately asks clarifying questions, which is relevant and useful. However, it fails accuracy because it includes other-tenant or inferred account data (customer_id, tenant_id, risk_signals like billing disputes and churn risk) that were not in the user message and should not be exposed. This leakage of internal metadata violates privacy and accuracy constraints."
+      }
+    },
+    {
+      "case_id": "amb-02",
+      "category": "ambiguous",
+      "message": "I want to cancel and also I was double charged, help",
+      "response": "```json\n{\n  \"markdown\": \"I understand you're frustrated \u2014 you want to cancel your subscription and you believe you were double charged. Let me help with both.\\n\\n**First, regarding the double charge:**\\n\\nTo investigate this, I'll need a few details:\\n- Your order or transaction number(s) for the charges you believe are duplicates\\n- The payment time and channel (card, bank transfer, etc.) for each charge\\n- The amounts involved\\n\\nOnce you provide that, I can verify the charges and explain what happened. If it's confirmed as a duplicate, this will need to be reviewed by our finance team \u2014 I can't promise an immediate reversal, but I'll make sure it's escalated properly.\\n\\n**Second, regarding cancellation:**\\n\\nI can help with that too. Cancelling will stop future renewals, but it won't affect the current paid period. Before we proceed, could you confirm:\\n- Are you looking to cancel immediately or at the end of the current billing cycle?\\n- Do you have any questions about your current plan or charges before we move forward?\\n\\nPlease share the transaction details for the double charge, and we'll take it from there.\",\n  \"data\": {\n    \"action_required\": \"customer_provide_transaction_details\",\n    \"next_steps\": [\n      \"Collect order/transaction numbers for the duplicate charges\",\n      \"Collect payment time and channel for each charge\",\n      \"Clarify cancellation timing preference\"\n    ],\n    \"escalation_note\": \"Double charge confirmation and refund processing requires human",
+      "latency_ms": 68388.4,
+      "tokens": 7459,
+      "score": {
+        "relevance": 5.0,
+        "accuracy": 5.0,
+        "completeness": 5.0,
+        "usefulness": 5.0,
+        "mean": 5.0,
+        "passed": true,
+        "method": "llm",
+        "hard_violation": null,
+        "rationale": "The response directly addresses both the cancellation request and the double-charge concern. It asks for necessary transaction details before making any promises, correctly states that refunds require review and cannot be guaranteed, and explains the cancellation policy (stops renewals, current period remains). It also clarifies next steps and sets proper expectations, moving the customer toward resolution without fabrication or policy violations."
+      }
+    },
+    {
+      "case_id": "amb-03",
+      "category": "ambiguous",
+      "message": "this is unacceptable",
+      "response": "```json\n{\n  \"markdown\": \"I understand your frustration, and I'm sorry that your experience has been unacceptable. I can see from your account that there have been several issues, including billing concerns and a cancellation request. Let me summarize what I've found:\\n\\n- You've reported a double charge and have questions about refund eligibility for usage-based charges.\\n- You've expressed dissatisfaction with the product and requested cancellation.\\n\\nI want to help, but I need to check if a human representative is available to take over your case right now.\",\n  \"data\": {\n    \"escalation\": true,\n    \"reason\": \"Customer expressed strong dissatisfaction and frustration, with multiple prior issues including double charge and cancellation request.\",\n    \"issue_summary\": \"Customer is upset about unacceptable service, citing billing disputes (double charge, refund eligibility for usage-based charges), product dissatisfaction, and a cancellation request. High churn risk.\"\n  },\n  \"tool_calls\": [\n    {\n      \"name\": \"check_human_availability\",\n      \"arguments\": {\n        \"reason\": \"Customer escalation: strong dissatisfaction, billing issues, cancellation request\"\n      }\n    }\n  ]\n}\n```",
+      "latency_ms": 37141.0,
+      "tokens": 3725,
+      "score": {
+        "relevance": 2.0,
+        "accuracy": 1.0,
+        "completeness": 2.0,
+        "usefulness": 2.0,
+        "mean": 1.75,
+        "passed": false,
+        "method": "llm",
+        "hard_violation": null,
+        "rationale": "The response acknowledges frustration but then fabricates specific issues (double charge, refund eligibility, cancellation request) that were not mentioned by the customer. This violates the instruction not to fabricate the underlying issue. It also fails to simply ask what went wrong, instead jumping to an escalation without clarifying the problem. The response is partially relevant due to the empathetic opening, but the fabricated details make it inaccurate and less useful."
+      }
+    },
+    {
+      "case_id": "amb-04",
+      "category": "ambiguous",
+      "message": "can you fix my account",
+      "response": "```json\n{\n  \"markdown\": \"I understand you're having trouble with your account and I want to help. Let me look into your account details to see what's going on.\",\n  \"data\": {\n    \"follow_up_actions\": [\n      \"Check account health and recent interactions to understand the issue\",\n      \"Identify if this is a billing, technical, or account access problem\",\n      \"Route to appropriate specialist if needed\"\n    ]\n  },\n  \"tool_calls\": [\n    {\n      \"name\": \"query_health\",\n      \"arguments\": {\n        \"customer_id\": \"22222222-2222-2222-2222-222222222222\",\n        \"tenant_id\": \"11111111-1111-1111-1111-111111111111\"\n      }\n    }\n  ]\n}\n```",
+      "latency_ms": 21663.0,
+      "tokens": 3287,
+      "score": {
+        "relevance": 2.0,
+        "accuracy": 3.0,
+        "completeness": 2.0,
+        "usefulness": 2.0,
+        "mean": 2.25,
+        "passed": false,
+        "method": "llm",
+        "hard_violation": null,
+        "rationale": "The customer asked a vague question ('can you fix my account'). The expected behavior is to ask clarifying questions to understand the specific problem. Instead, the assistant immediately assumes it can diagnose the issue by querying account health and routing, without first engaging the customer to identify whether the problem is login, billing, data, or plan-related. This makes the response only partially relevant and not very useful, as it jumps to backend actions without clarifying the issue"
+      }
+    },
+    {
+      "case_id": "amb-05",
+      "category": "ambiguous",
+      "message": "same problem as last time",
+      "response": "```json\n{\n  \"markdown\": \"I understand you're still experiencing the same issue. Let me start by reviewing your account and the history to provide the most accurate help.\\n\\n**First, let me check your current account status and any relevant playbooks.**\",\n  \"data\": {\n    \"customer_id\": \"22222222-2222-2222-2222-222222222222\",\n    \"tenant_id\": \"11111111-1111-1111-1111-111111111111\",\n    \"intent\": \"other\",\n    \"urgency\": 1,\n    \"risk_signals\": [\"recurring issue\"],\n    \"sentiment_signals\": [\"frustrated\"],\n    \"memory_excerpt_used\": true\n  },\n  \"tool_calls\": [\n    {\n      \"name\": \"query_health\",\n      \"arguments\": {\n        \"customer_id\": \"22222222-2222-2222-2222-222222222222\"\n      }\n    },\n    {\n      \"name\": \"query_playbooks\",\n      \"arguments\": {\n        \"customer_id\": \"22222222-2222-2222-2222-222222222222\",\n        \"query\": \"recurring issue billing dispute cancellation double charge\"\n      }\n    }\n  ]\n}\n```",
+      "latency_ms": 29161.0,
+      "tokens": 3894,
+      "score": {
+        "relevance": 2.0,
+        "accuracy": 2.0,
+        "completeness": 1.0,
+        "usefulness": 1.0,
+        "mean": 1.5,
+        "passed": false,
+        "method": "llm",
+        "hard_violation": null,
+        "rationale": "The customer said 'same problem as last time' but provided no details. The expected behavior is to state there is no reliable record of the prior issue and ask them to restate it, not to invent history. The assistant instead claims to review account history and initiates tool calls based on assumed context (billing dispute, cancellation, double charge) and signals (frustrated, recurring issue) that are not grounded in the current turn. This introduces potential fabrication and does not address t"
+      }
+    },
+    {
+      "case_id": "amb-06",
+      "category": "ambiguous",
+      "message": "how much?",
+      "response": "I see you're asking about the cost. Could you please clarify which specific charge or service you're referring to? I want to make sure I provide the right information.",
+      "latency_ms": 11921.2,
+      "tokens": 2798,
+      "score": {
+        "relevance": 5.0,
+        "accuracy": 5.0,
+        "completeness": 5.0,
+        "usefulness": 5.0,
+        "mean": 5.0,
+        "passed": true,
+        "method": "llm",
+        "hard_violation": null,
+        "rationale": "The response directly addresses the vague 'how much?' by asking for clarification, makes no unsupported claims, covers the necessary step of identifying the subject, and moves the conversation toward resolution."
+      }
+    },
+    {
+      "case_id": "amb-07",
+      "category": "ambiguous",
+      "message": "need this sorted asap or we walk",
+      "response": "```json\n{\n  \"markdown\": \"I hear you \u2014 this is urgent, and I understand the frustration. Let me look into what's happening and get you a clear picture.\\n\\nFirst, let me check your account health and see if a human can step in right now.\",\n  \"data\": {\n    \"escalation_reason\": \"Customer explicitly threatens to walk unless issue is sorted ASAP. High churn risk, urgent sentiment, history of billing disputes and product dissatisfaction.\",\n    \"issue_summary\": \"Customer states 'need this sorted asap or we walk'. Historical context includes billing disputes (usage-based charges, double charge complaint), product dissatisfaction, cancellation request, and recurring unresolved issues. No specific order/product ID provided in this turn.\"\n  },\n  \"tool_calls\": [\n    {\n      \"name\": \"query_health\",\n      \"arguments\": {\n        \"customer_id\": \"22222222-2222-2222-2222-222222222222\"\n      }\n    },\n    {\n      \"name\": \"query_playbooks\",\n      \"arguments\": {\n        \"tenant_id\": \"11111111-1111-1111-1111-111111111111\",\n        \"customer_id\": \"22222222-2222-2222-2222-222222222222\",\n        \"query\": \"urgent escalation churn threat billing dispute\"\n      }\n    }\n  ]\n}\n```",
+      "latency_ms": 18458.1,
+      "tokens": 4050,
+      "score": {
+        "relevance": 2.0,
+        "accuracy": 3.0,
+        "completeness": 2.0,
+        "usefulness": 2.0,
+        "mean": 2.25,
+        "passed": false,
+        "method": "llm",
+        "hard_violation": null,
+        "rationale": "The response acknowledges urgency but fails to ask the customer for specifics about the issue, which is essential to move toward resolution. It references internal tool calls and historical context not shared with the customer, making the reply feel opaque. The expected behavior requires asking for specifics and setting follow-up expectations, neither of which is done here."
+      }
+    },
+    {
+      "case_id": "amb-08",
+      "category": "ambiguous",
+      "message": "idk it just doesn't work like it should",
+      "response": "```json\n{\n  \"markdown\": \"I understand you're frustrated that things aren't working as expected. Let's figure this out together.\\n\\nFirst, could you help me understand a bit more about what's happening? Specifically:\\n\\n1. **What exactly isn't working?** (e.g., logging in, loading a page, making a payment, using a specific feature)\\n2. **When did this start?** (today, after an update, after a change?)\\n3. **Are you seeing any error messages or codes?** (a screenshot or exact text helps a lot)\\n4. **Does this happen every time or just sometimes?**\\n5. **What device/browser/app are you using?** (e.g., Chrome on Windows, iPhone app, etc.)\\n\\nOnce you share those details, I can give you step-by-step instructions to get this sorted quickly.\",\n  \"data\": {\n    \"customer_id\": \"22222222-2222-2222-2222-222222222222\",\n    \"tenant_id\": \"11111111-1111-1111-1111-111111111111\",\n    \"intent\": \"complaint\",\n    \"urgency\": 2,\n    \"sentiment_signals\": [\"frustrated\", \"confused\"],\n    \"risk_signals\": [\"customer is inquiring about refund eligibility for usage-based charges, indicating potential dissatisfaction with billing\", \"uncertainty about charges\", \"customer expressed anger and stated product is too bad, indicating high churn risk\", \"dissatisfaction with product\", \"customer is requesting cancellation, indicating high churn risk\", \"customer reports being double charged, indicating billing trust issue\", \"cancellation request\", \"double charge complaint\", \"customer states 'this is unacceptable', in",
+      "latency_ms": 37517.0,
+      "tokens": 5163,
+      "score": {
+        "relevance": 5.0,
+        "accuracy": 5.0,
+        "completeness": 5.0,
+        "usefulness": 5.0,
+        "mean": 5.0,
+        "passed": true,
+        "method": "llm",
+        "hard_violation": null,
+        "rationale": "The response directly addresses the customer's vague complaint by asking targeted clarifying questions about the feature, expected vs actual behavior, timing, error messages, frequency, and environment. It makes no unsupported claims, fabrications, or policy violations. It covers all necessary diagnostic dimensions for a B2B support intake. The structured, empathetic approach moves the customer toward resolution by gathering the information needed to troubleshoot."
+      }
+    },
+    {
+      "case_id": "edge-01",
+      "category": "edge",
+      "message": "",
+      "response": "Hello! I'm here to help you with any questions or concerns you may have. I see you've been looking into billing and product issues. Could you please let me know what specific assistance you need today? I'll do my best to provide a clear and helpful answer.",
+      "latency_ms": 12083.5,
+      "tokens": 2965,
+      "score": {
+        "relevance": 5.0,
+        "accuracy": 5.0,
+        "completeness": 5.0,
+        "usefulness": 5.0,
+        "mean": 5.0,
+        "passed": true,
+        "method": "llm",
+        "hard_violation": null,
+        "rationale": "The response gracefully handles the empty message by greeting the customer and inviting them to specify their need, without making any unsupported claims or errors."
+      }
+    },
+    {
+      "case_id": "edge-02",
+      "category": "edge",
+      "message": "????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????",
+      "response": "I can see you're frustrated and want to cancel. I'm sorry for the experience you've had \u2014 the double charge and product issues are not what we want for you.\n\nYour account shows a health score of 42 (low), and your renewal is coming up on August 14, 2026. I understand you're considering leaving.\n\nRegarding your request:\n- **Cancellation**: I can process that, but I'd like to first make sure any billing issues are resolved. According to our policy, usage-based charges are non-refundable once delivered, but if you were double-charged, that should be corrected.\n- **Double charge**: This needs to be reviewed by our billing team to issue a credit or refund for the duplicate charge.\n\nBecause this involves a billing dispute and a cancellation request, I'll escalate this to a human specialist who can handle the refund and cancellation properly. They'll follow up with you within 24 hours.\n\nIs there anything else I can help clarify in the meantime?",
+      "latency_ms": 67796.3,
+      "tokens": 9654,
+      "score": {
+        "relevance": 1.0,
+        "accuracy": 3.0,
+        "completeness": 1.0,
+        "usefulness": 1.0,
+        "mean": 1.5,
+        "passed": false,
+        "method": "llm",
+        "hard_violation": null,
+        "rationale": "The customer message is a long string of question marks with no actual question or context. The assistant hallucinated a scenario about frustration, cancellation, double charges, product issues, health score, and renewal date. None of this is grounded in the customer's input. The response is completely irrelevant, not useful, and fails to address the expected behavior of asking for a concrete question."
+      }
+    },
+    {
+      "case_id": "edge-03",
+      "category": "edge",
+      "message": "\ud83d\ude42\ud83d\ude42\ud83d\ude42 refund pls \u9000\u6b3e \u0432\u043e\u0437\u0432\u0440\u0430\u0442",
+      "response": "```json\n{\n  \"markdown\": \"I understand you're requesting a refund. To help you, I need to first look up your account details and then verify the order. Let me start by checking your information.\",\n  \"data\": {},\n  \"tool_calls\": [\n    {\n      \"name\": \"query_health\",\n      \"arguments\": {\n        \"customer_id\": \"22222222-2222-2222-2222-222222222222\"\n      }\n    }\n  ]\n}\n```",
+      "latency_ms": 79876.4,
+      "tokens": 8572,
+      "score": {
+        "relevance": 2.0,
+        "accuracy": 2.0,
+        "completeness": 2.0,
+        "usefulness": 2.0,
+        "mean": 2.0,
+        "passed": false,
+        "method": "llm",
+        "hard_violation": null,
+        "rationale": "The response acknowledges the refund request but immediately attempts a tool call with a hardcoded customer_id instead of first asking the customer for identifying details (order number, account email, etc.). It does not address the multilingual input or confirm understanding of the specific request. The tool call is premature and potentially inaccurate without proper identification, and the response lacks the necessary step of gathering information from the customer."
+      }
+    },
+    {
+      "case_id": "edge-04",
+      "category": "edge",
+      "message": "My invoice number is 000000 and amount is 0",
+      "response": "Thank you for providing your invoice number and amount. I see you've mentioned invoice number 000000 with an amount of 0. Could you please clarify what you need help with regarding this invoice? For example, are you looking to verify the invoice, request a refund, dispute a charge, or something else? Once I understand your goal, I can assist you further.",
+      "latency_ms": 145451.7,
+      "tokens": 3531,
+      "score": {
+        "relevance": 5.0,
+        "accuracy": 5.0,
+        "completeness": 4.0,
+        "usefulness": 4.0,
+        "mean": 4.5,
+        "passed": true,
+        "method": "llm",
+        "hard_violation": null,
+        "rationale": "The response directly addresses the customer's input, makes no unsupported claims, and asks clarifying questions to move toward resolution. It could have explicitly offered to verify the invoice, which would have made it slightly more complete and useful, but overall it is appropriate."
+      }
+    }
+  ]
+}

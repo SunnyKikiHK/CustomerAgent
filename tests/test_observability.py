@@ -107,3 +107,60 @@ def test_langfuse_client_none_without_credentials(monkeypatch):
     monkeypatch.delenv("LANGFUSE_SECRET_KEY", raising=False)
     lf.reset_langfuse_client()
     assert lf.get_langfuse_client() is None
+
+
+def test_langfuse_sdk_v4_observation_lifecycle(monkeypatch):
+    from packages.observability.src import tracer
+
+    class _Observation:
+        def __init__(self):
+            self.updated = None
+
+        def update(self, **kwargs):
+            self.updated = kwargs
+
+    class _ObservationContext:
+        def __init__(self, observation):
+            self.observation = observation
+            self.closed = False
+
+        def __enter__(self):
+            return self.observation
+
+        def __exit__(self, exc_type, exc, traceback):
+            self.closed = True
+
+    class _Client:
+        def __init__(self):
+            self.observation = _Observation()
+            self.context = _ObservationContext(self.observation)
+            self.started = None
+
+        def create_trace_id(self, *, seed):
+            return f"trace-{seed}"
+
+        def start_as_current_observation(self, **kwargs):
+            self.started = kwargs
+            return self.context
+
+    client = _Client()
+    monkeypatch.setenv("LANGFUSE_PUBLIC_KEY", "pk-test")
+    monkeypatch.setenv("LANGFUSE_SECRET_KEY", "sk-test")
+    monkeypatch.setattr(tracer, "get_langfuse_client", lambda: client)
+
+    with tracer.observe(
+        "planner.build",
+        attributes={"trace_id": "session-1", "tenant_id": "tenant-1"},
+        kind="chain",
+    ) as span:
+        span.set("task_count", 2)
+
+    assert client.started == {
+        "trace_context": {"trace_id": "trace-session-1"},
+        "name": "planner.build",
+        "as_type": "chain",
+        "metadata": {"trace_id": "session-1", "tenant_id": "tenant-1"},
+    }
+    assert client.observation.updated["output"]["status"] == "ok"
+    assert client.observation.updated["output"]["task_count"] == 2
+    assert client.context.closed is True

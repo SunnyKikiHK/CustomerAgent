@@ -1,0 +1,58 @@
+flowchart TD
+    A[Customer chat request] --> B[POST /chat/turn API]
+    B --> C[ConversationOrchestrator]
+
+    C --> D[Load tenant config, constraints, and conversation memory]
+    D --> E[Intent recognition]
+    E --> E1[LLM classifier + local embedding + keyword voting]
+    E1 --> F{Low-risk fast path?}
+
+    F -->|Yes| G[General-agent task]
+    F -->|No| H{LLM role planner enabled?}
+    H -->|Yes| I[Select roles from trusted allowlist]
+    H -->|No or fallback| J[Deterministic intent and keyword routing]
+    I --> K[Build dependency-aware plan]
+    J --> K
+
+    K --> L{Policy/playbook needed?}
+    L -->|Yes| M[Playbook retrieval task]
+    M --> N[Query rewrite -> parallel recall -> dedupe -> LLM rerank]
+    N --> O[pgvector tenant playbooks]
+    O --> P[Answer specialist task(s)]
+    L -->|No| P
+
+    P --> Q[DelegationManager]
+    Q --> R[Parallel ready subagent batches]
+    R --> S[ReAct loop]
+    S --> S1[Role prompt + matching tenant Skills]
+    S1 --> S2{Tool needed?}
+    S2 -->|Yes| S3[Read-only MCP tool call]
+    S3 --> S
+    S2 -->|No| T[Subagent results]
+
+    T --> U{Critic required?}
+    U -->|Yes| V[ComplianceCriticAgent]
+    U -->|No, simple-plan bypass enabled| W[Local approval]
+    V --> X{Approved?}
+    X -->|No| Y[Retry plan once with compliance constraint]
+    Y --> V
+    X -->|Yes| W
+
+    W --> Z[Emit customer response]
+    Z --> AA[Store chat messages]
+    AA --> AB[Background profile update]
+    Z --> AC{Complaint, escalation, or high urgency?}
+    AC -->|Yes| AD[Start Temporal ProcessSignalWorkflow]
+    AC -->|No| AE[Complete]
+    AD --> AE
+
+    C -. telemetry .-> AF[Structured logs + optional Langfuse / OpenTelemetry]
+    Q -. role success and latency .-> AG[PerformanceMonitor]
+    AG -. routing penalties .-> Q
+
+    classDef async fill:#FFF3CD,stroke:#856404,color:#111;
+    classDef safety fill:#F8D7DA,stroke:#842029,color:#111;
+    classDef storage fill:#D1E7DD,stroke:#0F5132,color:#111;
+    class AB,AD async;
+    class V,Y safety;
+    class D,O,AA storage;

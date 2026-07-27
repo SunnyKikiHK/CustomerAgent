@@ -25,6 +25,8 @@ from contextlib import contextmanager
 from typing import Any, Iterator
 
 from packages.observability.src.redaction import redact_attributes
+from packages.observability.src.langfuse import get_langfuse_client
+from packages.observability.src.collector import record_span
 
 logger = logging.getLogger("observability")
 
@@ -101,7 +103,7 @@ def observe(
         except Exception:
             otel_cm = None
 
-    langfuse_span = _maybe_langfuse_span(name, safe)
+    langfuse_span = _maybe_langfuse_span(name, safe, kind)
     logger.info("observe.start name=%s attrs=%s", name, span.attributes)
     error: BaseException | None = None
     try:
@@ -120,8 +122,6 @@ def observe(
             span.attributes,
         )
         try:
-            from packages.observability.src.collector import record_span
-
             record_span(name, elapsed_ms, status)
         except Exception:
             pass
@@ -155,19 +155,50 @@ def _maybe_otel_span(name: str, attributes: dict[str, Any]) -> Any | None:
         return None
 
 
-def _maybe_langfuse_span(name: str, attributes: dict[str, Any]) -> Any | None:
-    """Open a Langfuse span/trace when enabled, else None."""
+def _maybe_langfuse_span(
+    name: str,
+    attributes: dict[str, Any],
+    kind: str = "span",
+) -> Any | None:
+    """Open a Langfuse v4 observation context when enabled."""
     if not langfuse_enabled():
         return None
     try:
-        from packages.observability.src.langfuse import get_langfuse_client
-
         client = get_langfuse_client()
         if client is None:
             return None
-        trace_id = attributes.get("trace_id")
-        return client.trace(name=name, id=trace_id, metadata=attributes)
+        trace_context = None
+        trace_seed = attributes.get("trace_id")
+        if trace_seed:
+            trace_context = {
+                "trace_id": client.create_trace_id(seed=str(trace_seed)),
+            }
+        observation_type = (
+            kind
+            if kind
+            in {
+                "agent",
+                "chain",
+                "embedding",
+                "evaluator",
+                "generation",
+                "guardrail",
+                "retriever",
+                "span",
+                "tool",
+            }
+            else "span"
+        )
+        context_manager = client.start_as_current_observation(
+            trace_context=trace_context,
+            name=name,
+            as_type=observation_type,
+            metadata=attributes,
+        )
+        observation = context_manager.__enter__()
+        return context_manager, observation
     except Exception:
+        logger.exception("Failed to start Langfuse observation name=%s", name)
         return None
 
 
@@ -179,15 +210,29 @@ def _end_langfuse_span(
 ) -> None:
     if langfuse_span is None:
         return
+    context_manager, observation = langfuse_span
     try:
         output = {"status": status}
         if error is not None:
             output["error"] = type(error).__name__
         if span is not None:
             output.update(span.attributes)
-        langfuse_span.update(output=output)
+        observation.update(
+            output=output,
+            level="ERROR" if error is not None else "DEFAULT",
+            status_message=str(error) if error is not None else None,
+        )
     except Exception:
-        pass
+        logger.exception("Failed to update Langfuse observation")
+    finally:
+        try:
+            context_manager.__exit__(
+                type(error) if error is not None else None,
+                error,
+                error.__traceback__ if error is not None else None,
+            )
+        except Exception:
+            logger.exception("Failed to close Langfuse observation")
 
 
 __all__ = [

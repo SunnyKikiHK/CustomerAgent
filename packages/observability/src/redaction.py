@@ -15,19 +15,10 @@ _BLOCKED_KEYS = frozenset(
     {
         "password",
         "password_hash",
-        "token",
-        "access_token",
-        "refresh_token",
         "api_key",
         "authorization",
         "secret",
         "client_secret",
-        "email_body",
-        "body",
-        "raw_message",
-        "message_content",
-        "prompt",
-        "messages",
         "credentials",
     }
 )

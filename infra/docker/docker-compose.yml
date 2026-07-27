@@ -1,5 +1,5 @@
-# 1. docker compose -f infra/docker/docker-compose.yml up -d postgres langfuse-web langfuse-worker
-# 2. docker compose -f infra/docker/docker-compose.yml up -d
+# docker compose -f infra/docker/docker-compose.yml up -d
+# After get api from langfuse, use docker compose -f infra/docker/docker-compose.yml up -d --force-recreate api-gateway agent-worker
 services:
   tool-gateway:
     build:
@@ -72,7 +72,7 @@ services:
       LANGFUSE_PUBLIC_KEY: "${LANGFUSE_PUBLIC_KEY:-}"
       LANGFUSE_SECRET_KEY: "${LANGFUSE_SECRET_KEY:-}"
       # Always the in-compose service name (host-side scripts use localhost:3000).
-      LANGFUSE_HOST: "http://langfuse-web:3000"
+      LANGFUSE_BASE_URL: "http://langfuse-web:3000"
       OTEL_EXPORTER_OTLP_ENDPOINT: "${OTEL_EXPORTER_OTLP_ENDPOINT:-}"
       CS_MANAGER_GOOGLE_CLOUD_CLIENT_ID: "${CS_MANAGER_GOOGLE_CLOUD_CLIENT_ID:-}"
       CS_MANAGER_GOOGLE_CLOUD_CLIENT_SECRET: "${CS_MANAGER_GOOGLE_CLOUD_CLIENT_SECRET:-}"
@@ -126,7 +126,7 @@ services:
       LANGFUSE_PUBLIC_KEY: "${LANGFUSE_PUBLIC_KEY:-}"
       LANGFUSE_SECRET_KEY: "${LANGFUSE_SECRET_KEY:-}"
       # Always the in-compose service name (host-side scripts use localhost:3000).
-      LANGFUSE_HOST: "http://langfuse-web:3000"
+      LANGFUSE_BASE_URL: "http://langfuse-web:3000"
       OTEL_EXPORTER_OTLP_ENDPOINT: "${OTEL_EXPORTER_OTLP_ENDPOINT:-}"
     networks:
       - postgres_network
@@ -212,22 +212,121 @@ services:
       retries: 5
       start_period: 10s
 
+  langfuse-clickhouse:
+    image: clickhouse/clickhouse-server:25.12
+    container_name: agent_langfuse-clickhouse
+    user: "101:101"
+    environment:
+      CLICKHOUSE_DB: default
+      CLICKHOUSE_USER: langfuse
+      CLICKHOUSE_PASSWORD: "${LANGFUSE_CLICKHOUSE_PASSWORD}"
+    volumes:
+      - langfuse_clickhouse_data:/var/lib/clickhouse
+      - langfuse_clickhouse_logs:/var/log/clickhouse-server
+    networks:
+      - postgres_network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://localhost:8123/ping || exit 1"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  langfuse-minio:
+    image: cgr.dev/chainguard/minio
+    container_name: agent_langfuse-minio
+    entrypoint: sh
+    command: -c 'mkdir -p /data/langfuse && minio server --address ":9000" --console-address ":9001" /data'
+    environment:
+      MINIO_ROOT_USER: langfuse
+      MINIO_ROOT_PASSWORD: "${LANGFUSE_MINIO_PASSWORD}"
+    ports:
+      - "127.0.0.1:9090:9000"
+      - "127.0.0.1:9091:9001"
+    volumes:
+      - langfuse_minio_data:/data
+    networks:
+      - postgres_network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 2s
+      timeout: 5s
+      retries: 10
+
+  langfuse-redis:
+    image: redis:7-alpine
+    container_name: agent_langfuse-redis
+    command: >
+      redis-server
+      --requirepass ${LANGFUSE_REDIS_PASSWORD}
+      --appendonly yes
+      --maxmemory-policy noeviction
+    environment:
+      LANGFUSE_REDIS_PASSWORD: "${LANGFUSE_REDIS_PASSWORD}"
+    volumes:
+      - langfuse_redis_data:/data
+    networks:
+      - postgres_network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli -a $$LANGFUSE_REDIS_PASSWORD ping | grep PONG"]
+      interval: 3s
+      timeout: 10s
+      retries: 10
+
   langfuse-web:
-    image: langfuse/langfuse:2
+    image: langfuse/langfuse:3
     container_name: agent_langfuse-web
     ports:
       - "3000:3000"
     environment:
-      DATABASE_URL: postgres://sunny:sunny@postgres:5432/langfuse # production example: postgres://sunny:sunny@aws-db-instance.rds.amazonaws.com:5432/langfuse
+      DATABASE_URL: postgres://sunny:sunny@postgres:5432/langfuse
       NEXTAUTH_SECRET: "${NEXTAUTH_SECRET}"
       SALT: "${SALT}"
+      ENCRYPTION_KEY: "${LANGFUSE_ENCRYPTION_KEY}"
       NEXTAUTH_URL: http://localhost:3000
-      TELEMETRY_ENABLED: "false" # controls whether the application anonymously reports usage data back to the developers who built it
+      TELEMETRY_ENABLED: "false"
+      LANGFUSE_INIT_ORG_ID: "${LANGFUSE_INIT_ORG_ID:-}"
+      LANGFUSE_INIT_ORG_NAME: "${LANGFUSE_INIT_ORG_NAME:-}"
+      LANGFUSE_INIT_PROJECT_ID: "${LANGFUSE_INIT_PROJECT_ID:-}"
+      LANGFUSE_INIT_PROJECT_NAME: "${LANGFUSE_INIT_PROJECT_NAME:-}"
+      LANGFUSE_INIT_PROJECT_PUBLIC_KEY: "${LANGFUSE_INIT_PROJECT_PUBLIC_KEY:-}"
+      LANGFUSE_INIT_PROJECT_SECRET_KEY: "${LANGFUSE_INIT_PROJECT_SECRET_KEY:-}"
+      LANGFUSE_INIT_USER_EMAIL: "${LANGFUSE_INIT_USER_EMAIL:-}"
+      LANGFUSE_INIT_USER_NAME: "${LANGFUSE_INIT_USER_NAME:-}"
+      LANGFUSE_INIT_USER_PASSWORD: "${LANGFUSE_INIT_USER_PASSWORD:-}"
+      CLICKHOUSE_MIGRATION_URL: clickhouse://langfuse-clickhouse:9000
+      CLICKHOUSE_URL: http://langfuse-clickhouse:8123
+      CLICKHOUSE_USER: langfuse
+      CLICKHOUSE_PASSWORD: "${LANGFUSE_CLICKHOUSE_PASSWORD}"
+      CLICKHOUSE_CLUSTER_ENABLED: "false"
+      REDIS_HOST: langfuse-redis
+      REDIS_PORT: "6379"
+      REDIS_AUTH: "${LANGFUSE_REDIS_PASSWORD}"
+      LANGFUSE_S3_EVENT_UPLOAD_BUCKET: langfuse
+      LANGFUSE_S3_EVENT_UPLOAD_REGION: auto
+      LANGFUSE_S3_EVENT_UPLOAD_ACCESS_KEY_ID: langfuse
+      LANGFUSE_S3_EVENT_UPLOAD_SECRET_ACCESS_KEY: "${LANGFUSE_MINIO_PASSWORD}"
+      LANGFUSE_S3_EVENT_UPLOAD_ENDPOINT: http://langfuse-minio:9000
+      LANGFUSE_S3_EVENT_UPLOAD_FORCE_PATH_STYLE: "true"
+      LANGFUSE_S3_MEDIA_UPLOAD_BUCKET: langfuse
+      LANGFUSE_S3_MEDIA_UPLOAD_REGION: auto
+      LANGFUSE_S3_MEDIA_UPLOAD_ACCESS_KEY_ID: langfuse
+      LANGFUSE_S3_MEDIA_UPLOAD_SECRET_ACCESS_KEY: "${LANGFUSE_MINIO_PASSWORD}"
+      LANGFUSE_S3_MEDIA_UPLOAD_ENDPOINT: http://langfuse-minio:9000
+      LANGFUSE_S3_MEDIA_UPLOAD_FORCE_PATH_STYLE: "true"
       HOSTNAME: "0.0.0.0" #explicitly overriding the HOSTNAME environment variable and setting it to 0.0.0.0 (the universal address for "listen to everything").
     networks:
       - postgres_network
     depends_on:
       postgres:
+        condition: service_healthy
+      langfuse-clickhouse:
+        condition: service_healthy
+      langfuse-minio:
+        condition: service_healthy
+      langfuse-redis:
         condition: service_healthy
     restart: unless-stopped
     healthcheck:
@@ -238,13 +337,34 @@ services:
       start_period: 60s
 
   langfuse-worker:
-    image: langfuse/langfuse-worker:2
+    image: langfuse/langfuse-worker:3
     container_name: agent_langfuse-worker
     environment:
       DATABASE_URL: postgres://sunny:sunny@postgres:5432/langfuse
       NEXTAUTH_SECRET: "${NEXTAUTH_SECRET}"
       SALT: "${SALT}"
+      ENCRYPTION_KEY: "${LANGFUSE_ENCRYPTION_KEY}"
       TELEMETRY_ENABLED: "false"
+      CLICKHOUSE_MIGRATION_URL: clickhouse://langfuse-clickhouse:9000
+      CLICKHOUSE_URL: http://langfuse-clickhouse:8123
+      CLICKHOUSE_USER: langfuse
+      CLICKHOUSE_PASSWORD: "${LANGFUSE_CLICKHOUSE_PASSWORD}"
+      CLICKHOUSE_CLUSTER_ENABLED: "false"
+      REDIS_HOST: langfuse-redis
+      REDIS_PORT: "6379"
+      REDIS_AUTH: "${LANGFUSE_REDIS_PASSWORD}"
+      LANGFUSE_S3_EVENT_UPLOAD_BUCKET: langfuse
+      LANGFUSE_S3_EVENT_UPLOAD_REGION: auto
+      LANGFUSE_S3_EVENT_UPLOAD_ACCESS_KEY_ID: langfuse
+      LANGFUSE_S3_EVENT_UPLOAD_SECRET_ACCESS_KEY: "${LANGFUSE_MINIO_PASSWORD}"
+      LANGFUSE_S3_EVENT_UPLOAD_ENDPOINT: http://langfuse-minio:9000
+      LANGFUSE_S3_EVENT_UPLOAD_FORCE_PATH_STYLE: "true"
+      LANGFUSE_S3_MEDIA_UPLOAD_BUCKET: langfuse
+      LANGFUSE_S3_MEDIA_UPLOAD_REGION: auto
+      LANGFUSE_S3_MEDIA_UPLOAD_ACCESS_KEY_ID: langfuse
+      LANGFUSE_S3_MEDIA_UPLOAD_SECRET_ACCESS_KEY: "${LANGFUSE_MINIO_PASSWORD}"
+      LANGFUSE_S3_MEDIA_UPLOAD_ENDPOINT: http://langfuse-minio:9000
+      LANGFUSE_S3_MEDIA_UPLOAD_FORCE_PATH_STYLE: "true"
     networks:
       - postgres_network
     depends_on:
@@ -252,11 +372,22 @@ services:
         condition: service_healthy
       langfuse-web:
         condition: service_healthy
+      langfuse-clickhouse:
+        condition: service_healthy
+      langfuse-minio:
+        condition: service_healthy
+      langfuse-redis:
+        condition: service_healthy
     restart: unless-stopped
 
 volumes:
   redis_data:
   postgres_data:
+
+  langfuse_clickhouse_data:
+  langfuse_clickhouse_logs:
+  langfuse_minio_data:
+  langfuse_redis_data:
 
 networks:
   postgres_network:

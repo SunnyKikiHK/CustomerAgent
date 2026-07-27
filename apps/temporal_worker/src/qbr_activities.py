@@ -13,6 +13,7 @@ from typing import Any
 from temporalio import activity
 
 from packages.agent.src.types import SessionContext
+from packages.observability.src.tracer import observe
 
 
 @activity.defn
@@ -26,7 +27,19 @@ async def generate_tenant_qbr(tenant_id: str, workflow_id: str | None = None) ->
         session_id=f"qbr:{tenant_id}",
         trace_id=workflow_id or f"qbr:{tenant_id}",
     )
-    return await generate_qbr(tenant_id=tenant_id, ctx=ctx, workflow_id=workflow_id)
+    with observe(
+        "workflow.qbr.generate",
+        attributes={"tenant_id": tenant_id, "trace_id": ctx.trace_id},
+        kind="chain",
+    ) as span:
+        report = await generate_qbr(
+            tenant_id=tenant_id,
+            ctx=ctx,
+            workflow_id=workflow_id,
+        )
+        span.set("status", report.get("status"))
+        span.set("report_id", report.get("report_id"))
+        return report
 
 
 @activity.defn

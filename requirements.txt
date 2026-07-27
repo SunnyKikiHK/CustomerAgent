@@ -49,7 +49,7 @@ opentelemetry-api>=1.23.0
 opentelemetry-sdk>=1.23.0
 opentelemetry-exporter-otlp>=1.23.0
 opentelemetry-instrumentation-fastapi>=0.44b0
-langfuse>=2.20.0
+langfuse==4.12.0
 
 # Resilience
 pybreaker>=1.0.2

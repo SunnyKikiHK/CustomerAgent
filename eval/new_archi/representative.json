@@ -1,0 +1,79 @@
+{
+  "cases": 3,
+  "latency_ms": {
+    "p50": 31393.6,
+    "p95": 31393.6,
+    "min": 1974.2,
+    "max": 31745.0
+  },
+  "results": [
+    {
+      "case_id": "amb-01",
+      "category": "ambiguous",
+      "message": "it's broken",
+      "latency_ms": 1974.2,
+      "response_preview": "I need more context to understand what exactly is broken. Could you please share details about the specific feature, product, or service that's experiencing issues? For example, is it related to your ",
+      "error": null,
+      "metrics": {
+        "react_steps": 1,
+        "llm_calls": 1,
+        "tool_calls": 0,
+        "forced_synthesis": false,
+        "collapsed": true,
+        "prompt_tokens": 1414,
+        "completion_tokens": 81,
+        "total_tokens": 1495
+      },
+      "span_names": [
+        "planner.orchestrator_step"
+      ]
+    },
+    {
+      "case_id": "amb-02",
+      "category": "ambiguous",
+      "message": "I want to cancel and also I was double charged, help",
+      "latency_ms": 31745.0,
+      "response_preview": "",
+      "error": "BadRequestError: Error code: 400 - {'error': {'message': 'Provider returned error', 'code': 400, 'metadata': {'raw': '{\"error\":{\"code\":\"MissingParameter\",\"message\":\"The request failed because it is missing `messages.tool_call_id` parameter. Request id: 021784704966016dc50f194675e1cbc6bc0c2210aaea0b0fdf52f\",\"param\":\"\",\"type\":\"BadRequest\"}}', 'provider_name': 'Seed', 'is_byok': False, 'provider_error_code': 'MissingParameter'}}, 'user_id': 'user_3E45HXwdTsbSX8J7O5jof1BjUDV'}",
+      "metrics": {
+        "react_steps": 2,
+        "llm_calls": 1,
+        "tool_calls": 1,
+        "forced_synthesis": false,
+        "collapsed": false,
+        "prompt_tokens": 1423,
+        "completion_tokens": 49,
+        "total_tokens": 1472
+      },
+      "span_names": [
+        "planner.orchestrator_step",
+        "tool.query_health",
+        "tool.delegate_billing",
+        "planner.orchestrator_step"
+      ]
+    },
+    {
+      "case_id": "tool-01",
+      "category": "tool_error",
+      "message": "What's my current account health score and MRR?",
+      "latency_ms": 31393.6,
+      "response_preview": "",
+      "error": "BadRequestError: Error code: 400 - {'error': {'message': 'Provider returned error', 'code': 400, 'metadata': {'raw': '{\"error\":{\"code\":\"MissingParameter\",\"message\":\"The request failed because it is missing `messages.tool_call_id` parameter. Request id: 0217847054253824b2f64bfb09d213dd2215030b1eaaf1f2844c8\",\"param\":\"\",\"type\":\"BadRequest\"}}', 'provider_name': 'Seed', 'is_byok': False, 'provider_error_code': 'MissingParameter'}}, 'user_id': 'user_3E45HXwdTsbSX8J7O5jof1BjUDV'}",
+      "metrics": {
+        "react_steps": 2,
+        "llm_calls": 1,
+        "tool_calls": 1,
+        "forced_synthesis": false,
+        "collapsed": false,
+        "prompt_tokens": 1421,
+        "completion_tokens": 29,
+        "total_tokens": 1450
+      },
+      "span_names": [
+        "planner.orchestrator_step",
+        "tool.query_health",
+        "planner.orchestrator_step"
+      ]
+    }
+  ]
+}

@@ -8,8 +8,13 @@ package to be installed.
 
 from __future__ import annotations
 
+import logging
 import os
 from typing import Any
+
+from langfuse import Langfuse
+
+logger = logging.getLogger("observability.langfuse")
 
 _CLIENT: Any | None = None
 _ATTEMPTED = False
@@ -33,14 +38,13 @@ def get_langfuse_client() -> Any | None:
         _CLIENT = None
         return None
     try:
-        from langfuse import Langfuse
-
         _CLIENT = Langfuse(
             public_key=public_key,
             secret_key=secret_key,
-            host=os.getenv("LANGFUSE_HOST", "http://localhost:3000"),
+            base_url=os.getenv("LANGFUSE_BASE_URL", "http://localhost:3000"),
         )
     except Exception:
+        logger.exception("Failed to initialize Langfuse client")
         _CLIENT = None
     return _CLIENT
 

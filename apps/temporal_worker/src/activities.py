@@ -20,6 +20,7 @@ from temporalio import activity
 from apps.agent_service.src.signals.detectors import run_all_detectors
 from apps.agent_service.src.signals.normalizer import normalize_signal_payload
 from apps.agent_service.src.signals.records import mark_signal_status, record_signal
+from packages.observability.src.tracer import observe
 
 
 @activity.defn
@@ -30,7 +31,14 @@ async def scan_tenant_signals(tenant_id: str) -> list[dict[str, Any]]:
     ProcessSignalWorkflow per signal). Degrades to an empty list when the DB is
     unavailable (detectors already swallow DB failures).
     """
-    return await run_all_detectors(tenant_id=tenant_id)
+    with observe(
+        "workflow.signal.scan",
+        attributes={"tenant_id": tenant_id},
+        kind="chain",
+    ) as span:
+        detected = await run_all_detectors(tenant_id=tenant_id)
+        span.set("detected_count", len(detected))
+        return detected
 
 
 @activity.defn
@@ -73,7 +81,19 @@ async def process_signal(payload: dict[str, Any]) -> dict[str, Any]:
     queue = get_signal_queue()
     agent_input = queue.to_agent_input(payload)
     ctx = queue.to_session_context(payload)
-    response = await run_signal_agent(agent_input, ctx)
+    with observe(
+        "workflow.signal.process",
+        attributes={
+            "tenant_id": ctx.tenant_id,
+            "customer_id": ctx.user_id,
+            "trace_id": ctx.trace_id,
+            "signal_id": ctx.signal_id,
+        },
+        kind="chain",
+    ) as span:
+        response = await run_signal_agent(agent_input, ctx)
+        span.set("approved", getattr(response, "approved", False))
+        span.set("subagent_count", len(getattr(response, "subagent_results", [])))
 
     decision = getattr(response, "final_decision", None)
     return {

@@ -1,0 +1,149 @@
+{
+  "summary": {
+    "run_id": "f84f2493ebc1",
+    "mode": "live",
+    "cases": 5,
+    "passed": 5,
+    "pass_rate": 1.0,
+    "dimension_means": {
+      "relevance": 5.0,
+      "accuracy": 5.0,
+      "completeness": 5.0,
+      "usefulness": 5.0
+    },
+    "by_category": {
+      "ambiguous": {
+        "n": 5,
+        "passed": 5,
+        "pass_rate": 1.0,
+        "mean": 5.0
+      }
+    }
+  },
+  "metrics": {
+    "count": 5,
+    "successes": 5,
+    "success_rate": 1.0,
+    "latency_ms": {
+      "p50": 507908.69,
+      "p95": 576883.35,
+      "avg": 523845.56
+    },
+    "tokens_per_successful_task": 4516.6,
+    "cost_per_resolution_usd": 0.0,
+    "total_tokens": 22583,
+    "time_breakdown_ms": {
+      "reasoning": 165927.5,
+      "tool": 150129.3,
+      "llm": 0.0,
+      "other": 16144.5
+    },
+    "time_breakdown_pct": {
+      "reasoning": 49.9,
+      "tool": 45.2,
+      "llm": 0.0,
+      "other": 4.9
+    }
+  },
+  "regressions": [],
+  "suggestions": [
+    "P95 latency 576883.35ms is high (>20s): reduce max_react_steps, disable reasoning on the hot path, or shrink the planner/critic model."
+  ],
+  "results": [
+    {
+      "case_id": "amb-01",
+      "category": "ambiguous",
+      "message": "it's broken",
+      "response": "I'm sorry to hear something isn't working! Could you share a bit more detail about what's broken? For example:\n\n- What were you trying to do?\n- Are you seeing an error message? If so, what does it say?\n- When did this start happening?\n\nThe more context you can provide, the faster I can help get this resolved for you.",
+      "latency_ms": 469987.2,
+      "tokens": 2983,
+      "score": {
+        "relevance": 5.0,
+        "accuracy": 5.0,
+        "completeness": 5.0,
+        "usefulness": 5.0,
+        "mean": 5.0,
+        "passed": true,
+        "method": "llm",
+        "hard_violation": null,
+        "rationale": "The response perfectly matches the expected behavior: it asks clarifying questions without guessing a fix or inventing account facts. It is relevant, accurate (no policy violations), complete (covers key clarifying points), and useful (guides the customer toward providing necessary details)."
+      }
+    },
+    {
+      "case_id": "amb-02",
+      "category": "ambiguous",
+      "message": "I want to cancel and also I was double charged, help",
+      "response": "I understand you'd like to cancel your subscription and you've reported a double charge\u2014I want to help resolve both concerns.\n\nI attempted to check your account details and connect with our billing team, but I'm currently experiencing a temporary delay. To assist you better, could you please provide your account email or customer ID? This will help me look up your subscription and investigate the double charge more efficiently.\n\nIn the meantime, I've noted your cancellation request and will follow up as soon as possible. If you have any transaction IDs, dates, or amounts related to the double charge, that would also be useful for our billing review.",
+      "latency_ms": 502636.5,
+      "tokens": 5219,
+      "score": {
+        "relevance": 5.0,
+        "accuracy": 5.0,
+        "completeness": 5.0,
+        "usefulness": 5.0,
+        "mean": 5.0,
+        "passed": true,
+        "method": "llm",
+        "hard_violation": null,
+        "rationale": "The response directly addresses both the cancellation request and the double charge issue, asks for necessary identifiers (account email/customer ID and transaction details) without promising anything prematurely, and sets clear next steps. It is fully aligned with the expected behavior."
+      }
+    },
+    {
+      "case_id": "amb-03",
+      "category": "ambiguous",
+      "message": "this is unacceptable",
+      "response": "I'm sorry to hear you're frustrated \u2014 that's not the experience we want for you. I'd like to help resolve this as quickly as possible.\n\nCould you share a bit more detail about what's happening? For example:\n- Is this related to a billing or payment issue?\n- A technical problem (error, crash, login issue)?\n- Something else?\n\nThe more context you can provide, the sooner I can get you the right support.",
+      "latency_ms": 507908.7,
+      "tokens": 4686,
+      "score": {
+        "relevance": 5.0,
+        "accuracy": 5.0,
+        "completeness": 5.0,
+        "usefulness": 5.0,
+        "mean": 5.0,
+        "passed": true,
+        "method": "llm",
+        "hard_violation": null,
+        "rationale": "The response directly addresses the customer's frustration, asks for specific details without fabricating the issue, and provides clear examples to guide the customer\u2014fully meeting the expected behavior."
+      }
+    },
+    {
+      "case_id": "amb-04",
+      "category": "ambiguous",
+      "message": "can you fix my account",
+      "response": "I'd be happy to help you with your account! To point you in the right direction, could you tell me a bit more about what's happening? For example:\n\n- Are you having trouble logging in or accessing your account?\n- Is there an issue with billing, charges, or your subscription?\n- Is something not working as expected with the product itself?\n\nOnce I understand the specific issue, I can get you the right support quickly!",
+      "latency_ms": 561812.1,
+      "tokens": 4951,
+      "score": {
+        "relevance": 5.0,
+        "accuracy": 5.0,
+        "completeness": 5.0,
+        "usefulness": 5.0,
+        "mean": 5.0,
+        "passed": true,
+        "method": "llm",
+        "hard_violation": null,
+        "rationale": "The response directly addresses the customer's request by asking clarifying questions about the specific issue, covering common categories (login, billing, product functionality) without assuming a problem. It is accurate, policy-correct, and avoids any fabrication or leaks. It is complete in guiding the customer to provide necessary details, and highly useful for moving toward resolution."
+      }
+    },
+    {
+      "case_id": "amb-05",
+      "category": "ambiguous",
+      "message": "same problem as last time",
+      "response": "I'd like to help, but I don't have any history or context about a previous issue in our conversation. Could you describe the problem you're experiencing? A few details will help me assist you more quickly:\n\n- **What's happening?** (e.g., error message, unexpected behavior, login issue)\n- **When did it start?** (e.g., today, this week)\n- **Where are you seeing it?** (e.g., a specific page, feature, or integration)\n\nOnce I understand the issue, I can look into it or connect you with the right team.",
+      "latency_ms": 576883.3,
+      "tokens": 4744,
+      "score": {
+        "relevance": 5.0,
+        "accuracy": 5.0,
+        "completeness": 5.0,
+        "usefulness": 5.0,
+        "mean": 5.0,
+        "passed": true,
+        "method": "llm",
+        "hard_violation": null,
+        "rationale": "The assistant correctly does not invent past history and requests the customer restate the issue, aligning with expected behavior. The response is highly relevant, accurate (no fabrication or policy violation), complete (asks for necessary details), and useful (provides clear next steps)."
+      }
+    }
+  ]
+}

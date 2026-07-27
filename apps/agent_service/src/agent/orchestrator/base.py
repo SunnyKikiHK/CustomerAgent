@@ -144,6 +144,11 @@ class BaseOrchestrator(ABC):
                 memory_excerpt=memory_excerpt,
             )
             _span.set("task_count", len(plan.tasks))
+            _span.set("task_roles", ",".join(task.role.value for task in plan.tasks))
+            _span.set(
+                "requires_critic",
+                plan_requires_critic(plan),
+            )
 
         with observe("executor.delegate", attributes=_trace_attrs) as _span:
             results = await execute_tasks(
@@ -157,6 +162,15 @@ class BaseOrchestrator(ABC):
                 domain=self.domain,
             )
             _span.set("result_count", len(results))
+            _span.set("successful_results", sum(result.success for result in results))
+            _span.set(
+                "result_roles",
+                ",".join(result.role.value for result in results),
+            )
+            _span.set(
+                "executor_tokens",
+                sum(result.tokens_used for result in results),
+            )
 
         proposed_external_writes = (
             extract_proposed_external_writes(results)
@@ -241,6 +255,17 @@ class BaseOrchestrator(ABC):
                 )
 
         decision = finalize_decision(results, review, proposed_external_writes)
+        with observe(
+            "orchestrator.finalize",
+            attributes={
+                **_trace_attrs,
+                "approved": review.approved,
+                "action": decision.action,
+                "external_write_count": len(decision.approved_external_writes),
+                "response_length": len(decision.response_text),
+            },
+        ):
+            pass
 
         # Gate emission on the finalized decision, not the raw review: the critic
         # may approve while the reducer still blocks (for example when redactions
@@ -322,6 +347,8 @@ class BaseOrchestrator(ABC):
                 proposed_external_writes=proposed_external_writes,
             )
             span.set("approved", review.approved)
+            span.set("finding_count", len(review.findings))
+            span.set("critic_tokens", usage.total)
             return review, usage
 
 

@@ -16,8 +16,9 @@ steps (intent, role routing, rewrite/rerank, memory) always pass ``reasoning=Fal
 
 from __future__ import annotations
 
+import logging
 import os
-from collections.abc import Mapping, Sequence
+from collections.abc import AsyncIterator, Callable, Mapping, Sequence
 from typing import Any, cast
 
 from openai import AsyncOpenAI
@@ -25,6 +26,10 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from packages.agent.src.models import worker_model
 from packages.agent.src.types import LLMUsage
+from packages.observability.src.langfuse import get_langfuse_client
+from packages.observability.src.redaction import redact_attributes
+
+logger = logging.getLogger(__name__)
 
 #: Default reasoning token budget when ``BUDGET_TOKENS`` is unset.
 _DEFAULT_BUDGET_TOKENS = 512
@@ -107,7 +112,7 @@ class LLMClient:
             max_retries=int(os.getenv("LLM_MAX_RETRIES", "1")),
         )
         self.default_model = default_model or worker_model()
-        self._langfuse = langfuse_client or self._build_langfuse_client()
+        self._langfuse = langfuse_client if langfuse_client is not None else get_langfuse_client()
 
     async def complete(
         self,
@@ -137,6 +142,11 @@ class LLMClient:
             trace_id=trace_id,
             messages=payload_messages,
             metadata=dict(metadata or {}),
+            model_parameters={
+                "temperature": temperature,
+                "max_tokens": max_tokens,
+                "reasoning_enabled": use_reasoning,
+            },
         )
 
         request: dict[str, Any] = {
@@ -173,25 +183,86 @@ class LLMClient:
             self._end_generation(generation, error=exc)
             raise
 
+    async def stream(
+        self,
+        messages: Sequence[LLMMessage | Mapping[str, str]],
+        *,
+        model: str | None = None,
+        temperature: float = 0.2,
+        max_tokens: int | None = None,
+        reasoning: bool | None = None,
+        trace_id: str | None = None,
+        name: str = "agent.llm.stream",
+        metadata: Mapping[str, Any] | None = None,
+        on_complete: Callable[[LLMResponse], None] | None = None,
+    ) -> AsyncIterator[str]:
+        """Stream a completion while recording one Langfuse v4 generation."""
+        selected_model = model or self.default_model
+        use_reasoning = reasoning_default() if reasoning is None else bool(reasoning)
+        payload_messages = [self._serialize_message(message) for message in messages]
+        generation = self._start_generation(
+            name=name,
+            model=selected_model,
+            trace_id=trace_id,
+            messages=payload_messages,
+            metadata=dict(metadata or {}),
+            model_parameters={
+                "temperature": temperature,
+                "max_tokens": max_tokens,
+                "reasoning_enabled": use_reasoning,
+                "stream": True,
+            },
+        )
+        request: dict[str, Any] = {
+            "model": selected_model,
+            "messages": payload_messages,
+            "temperature": temperature,
+            "stream": True,
+            "stream_options": {"include_usage": True},
+            "extra_body": {"reasoning": reasoning_payload(use_reasoning)},
+        }
+        if max_tokens is not None:
+            request["max_tokens"] = max_tokens
+
+        text_parts: list[str] = []
+        usage = LLMUsage()
+        response_id: str | None = None
+        try:
+            stream = await self._client.chat.completions.create(**cast(Any, request))
+            async for chunk in stream:
+                response_id = response_id or cast(str | None, getattr(chunk, "id", None))
+                chunk_usage = getattr(chunk, "usage", None)
+                if chunk_usage is not None:
+                    usage.prompt_tokens = getattr(chunk_usage, "prompt_tokens", 0)
+                    usage.completion_tokens = getattr(
+                        chunk_usage,
+                        "completion_tokens",
+                        0,
+                    )
+                choices = getattr(chunk, "choices", [])
+                delta = choices[0].delta if choices else None
+                content = getattr(delta, "content", None) if delta else None
+                if content:
+                    text_parts.append(content)
+                    yield content
+            response = LLMResponse(
+                text="".join(text_parts),
+                model=selected_model,
+                usage=usage,
+                raw_response_id=response_id,
+            )
+            self._end_generation(generation, response=response)
+            if on_complete is not None:
+                on_complete(response)
+        except Exception as exc:
+            self._end_generation(generation, error=exc)
+            raise
+
     @staticmethod
     def _serialize_message(message: LLMMessage | Mapping[str, str]) -> dict[str, str]:
         if isinstance(message, LLMMessage):
             return message.model_dump()
         return {"role": message["role"], "content": message["content"]}
-
-    @staticmethod
-    def _build_langfuse_client() -> Any | None:
-        try:
-            from langfuse import Langfuse
-        except ImportError:
-            return None
-
-        public_key = os.getenv("LANGFUSE_PUBLIC_KEY")
-        secret_key = os.getenv("LANGFUSE_SECRET_KEY")
-        host = os.getenv("LANGFUSE_HOST")
-        if not public_key or not secret_key:
-            return None
-        return Langfuse(public_key=public_key, secret_key=secret_key, host=host)
 
     def _start_generation(
         self,
@@ -201,13 +272,30 @@ class LLMClient:
         trace_id: str | None,
         messages: list[dict[str, str]],
         metadata: dict[str, Any],
+        model_parameters: dict[str, Any] | None = None,
     ) -> Any | None:
+        """Start an SDK v4 generation and return its context and observation."""
         if self._langfuse is None:
             return None
         try:
-            trace = self._langfuse.trace(id=trace_id, name=name, metadata=metadata)
-            return trace.generation(name=name, model=model, input=messages, metadata=metadata)
+            trace_context = None
+            if trace_id:
+                trace_context = {
+                    "trace_id": self._langfuse.create_trace_id(seed=str(trace_id)),
+                }
+            context_manager = self._langfuse.start_as_current_observation(
+                trace_context=trace_context,
+                name=name,
+                as_type="generation",
+                input=messages,
+                model=model,
+                model_parameters=model_parameters,
+                metadata=redact_attributes(metadata),
+            )
+            observation = context_manager.__enter__()
+            return context_manager, observation
         except Exception:
+            logger.exception("Failed to start Langfuse generation name=%s", name)
             return None
 
     @staticmethod
@@ -219,21 +307,34 @@ class LLMClient:
     ) -> None:
         if generation is None:
             return
+        context_manager, observation = generation
         try:
             if error is not None:
-                generation.end(level="ERROR", status_message=str(error))
-                return
-            if response is not None:
-                generation.end(
+                observation.update(
+                    level="ERROR",
+                    status_message=f"{type(error).__name__}: {error}",
+                )
+            elif response is not None:
+                observation.update(
                     output=response.text,
-                    usage={
-                        "promptTokens": response.usage.prompt_tokens,
-                        "completionTokens": response.usage.completion_tokens,
-                        "totalTokens": response.usage.total,
+                    usage_details={
+                        "input": response.usage.prompt_tokens,
+                        "output": response.usage.completion_tokens,
+                        "total": response.usage.total,
                     },
+                    metadata={"provider_response_id": response.raw_response_id},
                 )
         except Exception:
-            return
+            logger.exception("Failed to update Langfuse generation")
+        finally:
+            try:
+                context_manager.__exit__(
+                    type(error) if error is not None else None,
+                    error,
+                    error.__traceback__ if error is not None else None,
+                )
+            except Exception:
+                logger.exception("Failed to close Langfuse generation")
 
 
 __all__ = [

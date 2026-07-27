@@ -1,0 +1,170 @@
+{
+  "summary": {
+    "run_id": "2a1468c114d5",
+    "mode": "live",
+    "cases": 3,
+    "passed": 0,
+    "pass_rate": 0.0,
+    "dimension_means": {
+      "relevance": 3.167,
+      "accuracy": 4.0,
+      "completeness": 2.333,
+      "usefulness": 2.63
+    },
+    "by_category": {
+      "ambiguous": {
+        "n": 3,
+        "passed": 0,
+        "pass_rate": 0.0,
+        "mean": 3.032
+      }
+    }
+  },
+  "metrics": {
+    "count": 3,
+    "successes": 0,
+    "success_rate": 0.0,
+    "latency_ms": {
+      "p50": 181246.31,
+      "p95": 193940.22,
+      "avg": 184454.05
+    },
+    "tokens_per_successful_task": 0.0,
+    "cost_per_resolution_usd": 0.0,
+    "total_tokens": 0,
+    "llm_call_count": 16,
+    "critic": {
+      "invocations": 3,
+      "skips": 0,
+      "invocation_rate": 1.0
+    },
+    "time_breakdown_ms": {
+      "reasoning": 69349.2,
+      "tool": 0.0,
+      "llm": 184647.5,
+      "other": 0.0
+    },
+    "time_breakdown_pct": {
+      "reasoning": 27.3,
+      "tool": 0.0,
+      "llm": 72.7,
+      "other": 0.0
+    }
+  },
+  "regressions": [
+    {
+      "kind": "case",
+      "identifier": "amb-01",
+      "baseline": 5.0,
+      "current": 2.907,
+      "delta": -2.093
+    },
+    {
+      "kind": "pass_rate",
+      "identifier": "overall",
+      "baseline": 0.692,
+      "current": 0.0,
+      "delta": -0.692
+    },
+    {
+      "kind": "dimension",
+      "identifier": "relevance",
+      "baseline": 4.067,
+      "current": 3.167,
+      "delta": -0.9
+    },
+    {
+      "kind": "dimension",
+      "identifier": "accuracy",
+      "baseline": 4.481,
+      "current": 4.0,
+      "delta": -0.481
+    },
+    {
+      "kind": "dimension",
+      "identifier": "completeness",
+      "baseline": 3.894,
+      "current": 2.333,
+      "delta": -1.561
+    },
+    {
+      "kind": "dimension",
+      "identifier": "usefulness",
+      "baseline": 4.067,
+      "current": 2.63,
+      "delta": -1.437
+    },
+    {
+      "kind": "latency",
+      "identifier": "p95_latency_ms",
+      "baseline": 136871.36,
+      "current": 193940.22,
+      "delta": 57068.86
+    }
+  ],
+  "suggestions": [
+    "Weakest dimension 'completeness' (2.333): Add checklists to specialist skills (e.g. always request order id) so answers cover required parts.",
+    "Category 'ambiguous' pass-rate 0.0: review those cases; add targeted skill guidance.",
+    "'llm' is 72.7% of measured time: LLM calls dominate: keep reasoning off for routing/critic, cache, or use a smaller worker model.",
+    "P95 latency 193940.22ms is high (>20s): reduce max_react_steps, disable reasoning on the hot path, or shrink the planner/critic model."
+  ],
+  "results": [
+    {
+      "case_id": "amb-01",
+      "category": "ambiguous",
+      "message": "it's broken",
+      "response": "[pipeline error: APIConnectionError]",
+      "latency_ms": 193940.2,
+      "tokens": 0,
+      "score": {
+        "relevance": 3.0,
+        "accuracy": 4.0,
+        "completeness": 2.0,
+        "usefulness": 2.63,
+        "mean": 2.907,
+        "passed": false,
+        "method": "heuristic",
+        "hard_violation": null,
+        "rationale": "Heuristic score (no LLM judge available)."
+      }
+    },
+    {
+      "case_id": "amb-02",
+      "category": "ambiguous",
+      "message": "I want to cancel and also I was double charged, help",
+      "response": "[pipeline error: APIConnectionError]",
+      "latency_ms": 181246.3,
+      "tokens": 0,
+      "score": {
+        "relevance": 3.0,
+        "accuracy": 4.0,
+        "completeness": 2.0,
+        "usefulness": 2.63,
+        "mean": 2.907,
+        "passed": false,
+        "method": "heuristic",
+        "hard_violation": null,
+        "rationale": "Heuristic score (no LLM judge available)."
+      }
+    },
+    {
+      "case_id": "amb-03",
+      "category": "ambiguous",
+      "message": "this is unacceptable",
+      "response": "[pipeline error: APIConnectionError]",
+      "latency_ms": 178175.6,
+      "tokens": 0,
+      "score": {
+        "relevance": 3.5,
+        "accuracy": 4.0,
+        "completeness": 3.0,
+        "usefulness": 2.63,
+        "mean": 3.282,
+        "passed": false,
+        "method": "heuristic",
+        "hard_violation": null,
+        "rationale": "Heuristic score (no LLM judge available)."
+      }
+    }
+  ]
+}
