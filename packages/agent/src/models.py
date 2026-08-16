@@ -36,9 +36,20 @@ def planner_model() -> str:
     )
 
 
+def orchestrator_model() -> str:
+    """Return the orchestrator model id for the GeneralAgent conversation loop.
+
+    The GeneralAgent orchestrator runs a bounded ReAct loop that calls specialist
+    subagents as tools, so it uses the larger reasoning model (the same one the
+    planner/critic uses) rather than the fast worker model.
+    """
+    return planner_model()
+
+
 __all__ = [
     "DEFAULT_WORKER_MODEL",
     "DEFAULT_PLANNER_MODEL",
     "worker_model",
     "planner_model",
+    "orchestrator_model",
 ]

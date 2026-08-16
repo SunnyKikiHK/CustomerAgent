@@ -72,6 +72,10 @@ class MCPToolLayer:
             "query_playbooks": _playbook_fallback,
         }
 
+    def register_fallback(self, tool_name: str, handler: Any) -> None:
+        """Register a fallback handler for ``tool_name`` (sync or async)."""
+        self._fallbacks[tool_name] = handler
+
     async def call(
         self,
         tool_name: str,

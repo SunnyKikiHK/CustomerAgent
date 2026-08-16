@@ -240,6 +240,7 @@ _DELEGATE_DEFINITIONS = {
 def register_conversation_delegate_tools() -> None:
     """Register the three delegate tools on the INTERNAL boundary (idempotent)."""
     from packages.tool_system.src.registry import ToolBoundary, register_tool
+    from apps.agent_service.src.agent.runtime.mcp.tool_layer import get_mcp_tool_layer
 
     for name, (definition, executor) in _DELEGATE_DEFINITIONS.items():
         register_tool(
@@ -250,6 +251,10 @@ def register_conversation_delegate_tools() -> None:
             tags=["conversation", "delegate"],
             overwrite=True,
         )
+
+    tool_layer = get_mcp_tool_layer()
+    for name in _DELEGATE_DEFINITIONS:
+        tool_layer.register_fallback(name, delegate_fallback)
 
 
 __all__ = [
