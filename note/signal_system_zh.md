@@ -148,8 +148,8 @@ TenantSignalScanWorkflow：run_all_detectors → 每个信号起一个子工作�
 2. ~~**QBR 报告邮件是"记录投递"而非"真发送"**~~ → **已解决**：`deliver_qbr_email` 现在复用
    合规门控的 `send_email` 路径真正投递报告并标记状态，发送失败则标记 `failed`。
 
-3. **NPS 候选人选择过于朴素**：`select_nps_candidates` 是"取前 50 个客户"，没有
-   "跳过近期已调查 / 只挑足够健康"等策略。
+3. **NPS 候选人选择仍较简单**：`select_nps_candidates` 现已跳过"近期已调查"
+   （`NPS_RECENT_SURVEY_DAYS`）与"缺邮箱"的客户；仍无"只挑足够健康 / 按活跃度优先"等更丰富策略。
 
 4. ~~**无定时调度**~~ → **已解决（需配置租户白名单）**：`apps/temporal_worker/src/worker.py`
    可为扫描（`SIGNAL_SCAN_TENANTS`）、NPS 外呼（`NPS_CAMPAIGN_TENANTS`）、QBR
@@ -173,8 +173,8 @@ TenantSignalScanWorkflow：run_all_detectors → 每个信号起一个子工作�
 10. **邮件提供方单一**：只有 Gmail + mock + console，无通用 SMTP / Outlook 等其他渠道；
     无退信/退订/送达率等**回执跟踪**。
 
-11. **QBR 收件人只取第一个 CSM**：`resolve_qbr_recipient` 只返回 `recipients[0]`，没有
-    多 CSM 分发 / 按客户归属路由。
+11. **QBR 收件人已 CSM 优先**：`list_qbr_recipients` 现按 CSM 优先排序，`recipients[0]`
+    确定性为指定 CSM；仍无多 CSM 分发 / 按客户归属路由。
 
 12. **报告发送未独立于生成**：QBR 生成与投递耦合在一个工作流里，草稿虽可先审后发，
     但"审阅后才投递"的独立闸门尚未真正落地为单独一步。

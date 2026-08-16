@@ -1,10 +1,11 @@
 """
 ConversationOrchestrator for customer-facing chat turns.
 
-Special:
-ConversationOrchestrator.on_approved() writes the conversation profile 
-asynchronously, so it does not block the chat response. 
-It supplies intent-derived fields and ConversationMemory.update_profile() adds LLM-extracted profile signals such as risk_signals, sentiment, adoption barriers, and communication preferences.
+The live path is the GeneralAgent Orchestrator-Workers loop
+(``run_conversation_loop`` / ``stream_conversation_loop``), not P-E-R planning.
+Post-turn side effects (message persistence, fire-and-forget profile update, and
+the conversation->signal bridge) run in ``_apply_loop_side_effects`` so they never
+block the chat response.
 """
 
 from __future__ import annotations

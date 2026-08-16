@@ -5,7 +5,17 @@
 > This is a single source-of-truth design document: it describes the **target** system, contracts,
 > and data flow. Concrete signatures live in the code.
 >
-> Temporal and Langfuse are **deferred** until the stack is proven runnable end to end.
+> **Current status (implementation reality — supersedes stale sections below):**
+> - The **conversation** path is **Orchestrator-Workers** (`ConversationLoop` / GeneralAgent ReAct
+>   with delegate tools), not the P-E-R pipeline §2/§12 originally described. The old conversation
+>   P-E-R planner (`conversation_planner.py`, `llm_planner.py`, `capability_catalog.py`) was removed.
+> - The **signal** path still runs P-E-R (`SignalOrchestrator` + `signal_planner.py`), unchanged.
+> - **Temporal is wired**: signal processing, NPS campaign, and QBR workflows + activities + schedules
+>   live in `apps/temporal_worker/` (replacing the `rq_worker` Redis poller described in §13). Only
+>   the *durable long-wait* helpers (`packages/session`) remain deferred.
+> - Signal stubs are finalized (gated `send_email` delivery, NPS/QBR schedules, NPS dedup, CSM-first
+>   QBR recipient); the prototype tools (`check_human_availability`, `process_refund`,
+>   `escalate_to_human`) remain `TODO(gate)` stubs.
 
 ---
 

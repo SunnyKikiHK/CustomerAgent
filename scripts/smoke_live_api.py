@@ -35,8 +35,8 @@ if str(_ROOT) not in sys.path:
 PASS = "PASS"
 FAIL = "FAIL"
 
-DEMO_TENANT_ID = "demo-tenant"
-DEMO_CUSTOMER_ID = "11111111-1111-1111-1111-111111111111"
+DEMO_TENANT_ID = "11111111-1111-1111-1111-111111111111"
+DEMO_CUSTOMER_ID = "22222222-2222-2222-2222-222222222222"
 
 #: Substrings in an error that indicate a connectivity / auth problem (as opposed
 #: to a logic bug). These are the cases where we must halt and notify the user.
