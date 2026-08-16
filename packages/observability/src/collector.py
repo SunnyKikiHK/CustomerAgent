@@ -17,6 +17,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 from typing import Iterator
 
+# It creates a variable whose value can be set independently in each "context" (e.g., each asynchronous task or thread).
 _ACTIVE: contextvars.ContextVar[list["SpanRecord"] | None] = contextvars.ContextVar(
     "eval_span_collector", default=None
 )

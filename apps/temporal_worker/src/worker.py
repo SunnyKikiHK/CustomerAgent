@@ -28,6 +28,7 @@ from apps.temporal_worker.src.qbr_activities import QBR_ACTIVITIES
 from apps.temporal_worker.src.qbr_workflows import GenerateTenantQbrWorkflow
 from apps.temporal_worker.src.workflows import (
     ProcessSignalWorkflow,
+    ProbeWorkflow,
     TenantSignalScanWorkflow,
 )
 
@@ -95,6 +96,7 @@ async def main() -> None:
             TenantSignalScanWorkflow,
             NpsCampaignWorkflow,
             GenerateTenantQbrWorkflow,
+            ProbeWorkflow,
         ],
         activities=[*SIGNAL_ACTIVITIES, *NPS_ACTIVITIES, *QBR_ACTIVITIES],
     )

@@ -23,6 +23,8 @@ import os
 import time
 from contextlib import contextmanager
 from typing import Any, Iterator
+from opentelemetry import trace
+
 
 from packages.observability.src.redaction import redact_attributes
 from packages.observability.src.langfuse import get_langfuse_client
@@ -47,7 +49,7 @@ def langfuse_enabled() -> bool:
 
 def otel_enabled() -> bool:
     """OTel is used when an OTLP endpoint is configured and not disabled."""
-    if not _enabled("OBSERVABILITY_OTEL", default=True):
+    if not _enabled("OBSERVABILITY_OTEL", default=False):
         return False
     return bool(os.getenv("OTEL_EXPORTER_OTLP_ENDPOINT"))
 
@@ -93,10 +95,19 @@ def observe(
     The span always emits a structured start/end log; it additionally opens a
     Langfuse span and/or an OTel span when those backends are enabled. Any
     backend error is swallowed. Attributes are redacted before leaving.
+
+    Functions:
+        measures elapsed time;
+        emits observe.start and observe.end structured logs;
+        records success/error status;
+        re-raises any exception after recording it;
+        creates and closes a Langfuse observation;
+        creates and closes an OTel span, when enabled;
+        adds a SpanRecord to the in-process evaluation collector if collect_spans() is active.
     """
     safe = redact_attributes(attributes)
     span = Span(name, dict(safe))
-    otel_cm = _maybe_otel_span(name, safe)
+    otel_cm = _maybe_otel_span(name, safe) # currently no OpenTelemetry Collector service in dockerfile
     if otel_cm is not None:
         try:
             span._otel_span = otel_cm.__enter__()
@@ -122,7 +133,7 @@ def observe(
             span.attributes,
         )
         try:
-            record_span(name, elapsed_ms, status)
+            record_span(name, elapsed_ms, status) # designed for evaluation/testing, but it is not technically restricted to tests
         except Exception:
             pass
         _end_langfuse_span(langfuse_span, span, status, error)
@@ -134,7 +145,11 @@ def observe(
 
 
 def trace_event(name: str, metadata: dict[str, Any] | None = None) -> None:
-    """Record a point-in-time event (backward-compatible with older callers)."""
+    """
+    Record a point-in-time event (backward-compatible with older callers).
+    
+    Use trace_event() for a point-in-time fact, where there is no operation duration to measure:
+    """
     safe = redact_attributes(metadata)
     logger.info("trace_event name=%s metadata=%s", name, safe)
     langfuse_span = _maybe_langfuse_span(name, safe)
@@ -142,12 +157,16 @@ def trace_event(name: str, metadata: dict[str, Any] | None = None) -> None:
 
 
 def _maybe_otel_span(name: str, attributes: dict[str, Any]) -> Any | None:
-    """Return an OTel span context manager when OTel is enabled, else None."""
+    """
+    otel_span is an OpenTelemetry span: a timed operation record used for 
+    distributed tracing across infrastructure such as HTTP calls, databases, 
+    queues, and Temporal workflows.
+
+    Return an OTel span context manager when OTel is enabled, else None.
+    """
     if not otel_enabled():
         return None
     try:
-        from opentelemetry import trace
-
         tracer = trace.get_tracer("customer-agent")
         cm = tracer.start_as_current_span(name)
         return cm

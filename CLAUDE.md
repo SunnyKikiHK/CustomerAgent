@@ -9,6 +9,18 @@ folder only holds `plan.md`, a `reference_project/`, and agent config. Run all
 commands from the `CustomerAgent/` root — `PYTHONPATH` is anchored here (this is the
 directory containing `config.sh`).
 
+## System documentation
+
+Two Chinese walkthroughs describe the two top-level systems:
+
+- `note/conversation_system_zh.md` — 对话系统：当前架构（Planner→Executor→Reflector）
+  的功能与架构，以及一套用于降低延迟的新架构（GeneralAgent / Orchestrator-Workers）。
+- `note/signal_system_zh.md` — 信号系统：来源、检测器、NPS、QBR、邮件发送等全部功能，
+  以及当前缺失 / 待完善之处。
+
+Older English notes (`note/conversation_system.md`, `note/signal_system.mmd`) may drift
+from the code; treat the code and this CLAUDE.md as authoritative.
+
 ## Environment & execution
 
 - **All Python execution must go through WSL/Linux**, not the Windows interpreter.
@@ -245,6 +257,17 @@ Every layer filters by `tenant_id`: Postgres RLS, Redis key prefixing
 (`tenant:{id}:...`), per-tenant queues. The gateway re-derives tenant identity from
 trusted context rather than the LLM-generated payload. Treat any code that could leak one
 tenant's data to another as a bug.
+
+### Conversation latency redesign (scaffolded, not wired)
+
+`apps/agent_service/src/agent/conversation/conversation_loop.py` (`ConversationLoop`) and
+`delegates.py` implement a **proposed** lower-latency conversation architecture: a single
+GeneralAgent running a bounded ReAct loop, calling specialists as tools (`delegate_billing`
+/ `delegate_technical` / `delegate_escalation`), with compliance rules embedded in its
+SKILL.md (no separate critic call) and real token streaming. It is **not yet wired into the
+running path** — `chat_handler.py` still calls `run_conversation_agent` →
+`ConversationOrchestrator.run()` (the P-E-R pipeline described above). See
+`note/conversation_system_zh.md` and `tests/test_conversation_loop.py` for the full design.
 
 ## Conventions
 

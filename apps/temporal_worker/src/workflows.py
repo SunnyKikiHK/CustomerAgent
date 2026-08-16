@@ -139,6 +139,29 @@ class TenantSignalScanWorkflow:
         }
 
 
+@workflow.defn
+class ProbeWorkflow:
+    """Deterministic no-op workflow used by ``scripts/check_temporal.py``.
+
+    It performs no activities and no nondeterministic work: reaching
+    ``WorkflowHandle.result()`` on this workflow proves both that the Temporal
+    server is reachable *and* that a worker is consuming the task queue end to
+    end (a workflow with no consumer would start but never complete). The
+    returned task queue/run id let the probe print exactly where it ran.
+    """
+
+    @workflow.run
+    async def run(self, payload: dict[str, Any]) -> dict[str, Any]:
+        info = workflow.info()
+        return {
+            "probe": "ok",
+            "workflow_id": info.workflow_id,
+            "run_id": info.run_id,
+            "task_queue": info.task_queue,
+            "echo": payload,
+        }
+
+
 def _signal_key(payload: dict[str, Any]) -> str:
     """Deterministic signal key from a detector payload (mirrors normalizer).
 
@@ -151,4 +174,4 @@ def _signal_key(payload: dict[str, Any]) -> str:
     return f"{signal_type}:{customer_id}"
 
 
-__all__ = ["ProcessSignalWorkflow", "TenantSignalScanWorkflow"]
+__all__ = ["ProcessSignalWorkflow", "TenantSignalScanWorkflow", "ProbeWorkflow"]
