@@ -14,8 +14,8 @@ from typing import Any
 _EXPORTS = {
     "handle_chat_turn": "apps.agent_service.src.agent.conversation.chat_handler",
     "ConversationOrchestrator": "apps.agent_service.src.agent.conversation.conversation_orchestrator",
-    "run_conversation_agent": "apps.agent_service.src.agent.conversation.conversation_orchestrator",
-    "build_conversation_plan": "apps.agent_service.src.agent.conversation.conversation_planner",
+    "run_conversation_loop": "apps.agent_service.src.agent.conversation.conversation_orchestrator",
+    "stream_conversation_loop": "apps.agent_service.src.agent.conversation.conversation_orchestrator",
     "IntentRecognizer": "apps.agent_service.src.agent.conversation.intent",
     "get_intent_recognizer": "apps.agent_service.src.agent.conversation.intent",
     "stream_approved_response": "apps.agent_service.src.agent.conversation.streaming",

@@ -27,7 +27,6 @@ from packages.agent.src.orchestration_types import (
 from packages.agent.src.types import AgentResponse, LLMUsage, SessionContext
 
 from apps.agent_service.src.agent.conversation.conversation_loop import ConversationLoop
-from apps.agent_service.src.agent.conversation.conversation_planner import build_conversation_plan
 from apps.agent_service.src.agent.conversation.intent import (
     IntentCategory,
     IntentResult,
@@ -198,69 +197,16 @@ class ConversationOrchestrator(BaseOrchestrator):
         tenant_constraints: list[str],
         memory_excerpt: str | None,
     ) -> tuple[OrchestratorPlan, LLMUsage]:
-        if not isinstance(agent_input, ConversationAgentInput):
-            raise TypeError("ConversationOrchestrator requires ConversationAgentInput")
+        """Unused: the conversation path runs the GeneralAgent loop, not P-E-R planning.
 
-        history = []
-        memory_context = await self.load_execution_memory_context(agent_input, ctx, config)
-        if memory_context:
-            history = [
-                {"role": message.role.value, "content": message.content}
-                for message in memory_context.recent_messages[-3:]
-            ]
-
-        self._last_intent = await self._intent.recognize(
-            agent_input.message.content,
-            history=history,
+        Kept only to satisfy ``BaseOrchestrator``'s abstract ``build_plan``. The live
+        conversation path is ``run_conversation_loop`` / ``stream_conversation_loop``,
+        and its post-turn side effects live in ``_apply_loop_side_effects``.
+        """
+        raise NotImplementedError(
+            "Conversation path uses the GeneralAgent Orchestrator-Workers loop; "
+            "P-E-R planning was removed."
         )
-        return await build_conversation_plan(
-            message=agent_input.message.content,
-            intent=self._last_intent,
-            config=config,
-            tenant_constraints=tenant_constraints,
-            memory_excerpt=memory_excerpt,
-            history=history,
-        )
-
-    async def on_approved(
-        self,
-        agent_input: AgentInput,
-        decision: FinalDecision,
-        ctx: SessionContext,
-    ) -> list[dict[str, object]]:
-        if not isinstance(agent_input, ConversationAgentInput):
-            return []
-        await self._memory.add_message(agent_input.message)
-        assistant_message = ChatMessage(
-            tenant_id=agent_input.tenant_id,
-            customer_id=agent_input.customer_id,
-            session_id=agent_input.session_id,
-            role=ChatMessageRole.ASSISTANT,
-            content=decision.response_text,
-        )
-        await self._memory.add_message(assistant_message)
-        if self._last_intent is not None:
-            sentiment = _sentiment_label(self._last_intent)
-            # Non-blocking: the profile update runs an LLM distill + DB writes.
-            # Do not make the customer wait for it; fire-and-forget so the reply
-            # returns immediately (mirrors the reference project's
-            # asyncio.create_task(update_profile(...))).
-            _spawn_background(
-                self._memory.update_profile(
-                    tenant_id=agent_input.tenant_id,
-                    customer_id=agent_input.customer_id,
-                    session_id=agent_input.session_id,
-                    profile_data=_profile_data_from_intent(self._last_intent, sentiment),
-                ),
-                label="conversation profile update",
-            )
-            # Conversation -> signal bridge: an unhappy or escalation turn queues
-            # a proactive signal so the signal system can analyze / apologize /
-            # email. The chat answer itself stays bounded (no inline outreach).
-            if _should_bridge_to_signal(self._last_intent):
-                await self._enqueue_negative_sentiment_signal(agent_input, sentiment)
-
-        return []
 
     async def _enqueue_negative_sentiment_signal(
         self,
@@ -302,28 +248,6 @@ class ConversationOrchestrator(BaseOrchestrator):
         except Exception:
             # Bridging is best-effort; never fail the chat turn because of it.
             return
-
-
-async def run_conversation_agent(
-    agent_input: ConversationAgentInput,
-    ctx: SessionContext,
-) -> AgentResponse:
-    """Entry point for a conversation orchestrator run."""
-    from packages.observability.src.tracer import observe
-
-    orchestrator = ConversationOrchestrator()
-    with observe(
-        "conversation.run",
-        attributes={
-            "tenant_id": agent_input.tenant_id,
-            "customer_id": agent_input.customer_id,
-            "session_id": agent_input.session_id,
-            "trace_id": ctx.trace_id,
-        },
-    ) as span:
-        response = await orchestrator.run(agent_input, ctx)
-        span.set("approved", getattr(response, "approved", None))
-        return response
 
 
 async def _build_loop(
@@ -465,7 +389,6 @@ async def stream_conversation_loop(
 
 __all__ = [
     "ConversationOrchestrator",
-    "run_conversation_agent",
     "run_conversation_loop",
     "stream_conversation_loop",
 ]

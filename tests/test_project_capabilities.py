@@ -25,6 +25,14 @@ def tenant_config() -> AgentConfig:
     )
 
 
+def _intent(category, urgency):
+    from apps.agent_service.src.agent.conversation.intent import IntentResult
+
+    return IntentResult(
+        intent=category, confidence=0.9, urgency=urgency, entities={}, reasoning=""
+    )
+
+
 # ── Embeddings ────────────────────────────────────────────────────────────────
 
 @pytest.mark.asyncio
@@ -61,75 +69,6 @@ def test_chunk_markdown_document_parses_front_matter_and_chunks():
     assert chunks[0].metadata["title"] == "Renewal Save"
     assert chunks[0].metadata["signal_type"] == "renewal_risk"
     assert all(chunk.text for chunk in chunks)
-
-
-# ── Conversation routing (disjoint specialists) ───────────────────────────────
-
-def _intent(category, urgency):
-    from apps.agent_service.src.agent.conversation.intent import IntentResult
-
-    return IntentResult(
-        intent=category, confidence=0.9, urgency=urgency, entities={}, reasoning=""
-    )
-
-
-@pytest.mark.asyncio
-async def test_conversation_routes_billing_to_billing_agent(tenant_config, monkeypatch):
-    from apps.agent_service.src.agent.conversation.conversation_planner import build_conversation_plan
-    from apps.agent_service.src.agent.conversation.intent import IntentCategory, UrgencyLevel
-
-    # Force the deterministic router (no LLM) for a hermetic routing assertion.
-    monkeypatch.setenv("CONVERSATION_LLM_PLANNER", "0")
-    plan, _ = await build_conversation_plan(
-        message="I need a refund for my invoice",
-        intent=_intent(IntentCategory.BILLING, UrgencyLevel.MEDIUM),
-        config=tenant_config,
-        tenant_constraints=[],
-        memory_excerpt=None,
-    )
-    roles = {task.role for task in plan.tasks}
-    assert AgentRole.BILLING in roles
-    # rule-bound (refund) turns pull in a playbook task
-    assert AgentRole.PLAYBOOK_RETRIEVAL in roles
-    # signal-only specialists never appear in a conversation plan
-    assert AgentRole.HEALTH_ANALYSIS not in roles
-    assert AgentRole.OUTREACH_DRAFT not in roles
-
-
-@pytest.mark.asyncio
-async def test_conversation_escalates_on_critical_urgency(tenant_config, monkeypatch):
-    from apps.agent_service.src.agent.conversation.conversation_planner import build_conversation_plan
-    from apps.agent_service.src.agent.conversation.intent import IntentCategory, UrgencyLevel
-
-    # Critical urgency is forced to ESCALATION in trusted code even with the LLM
-    # planner on; assert that with the LLM planner explicitly disabled too.
-    monkeypatch.setenv("CONVERSATION_LLM_PLANNER", "0")
-    plan, _ = await build_conversation_plan(
-        message="This is urgent, my whole team is blocked",
-        intent=_intent(IntentCategory.TECHNICAL, UrgencyLevel.CRITICAL),
-        config=tenant_config,
-        tenant_constraints=[],
-        memory_excerpt=None,
-    )
-    assert any(task.role == AgentRole.ESCALATION for task in plan.tasks)
-
-
-@pytest.mark.asyncio
-async def test_conversation_compound_fans_out(tenant_config, monkeypatch):
-    from apps.agent_service.src.agent.conversation.conversation_planner import build_conversation_plan
-    from apps.agent_service.src.agent.conversation.intent import IntentCategory, UrgencyLevel
-
-    monkeypatch.setenv("CONVERSATION_LLM_PLANNER", "0")
-    plan, _ = await build_conversation_plan(
-        message="I got a 500 error and was also charged twice",
-        intent=_intent(IntentCategory.TECHNICAL, UrgencyLevel.MEDIUM),
-        config=tenant_config,
-        tenant_constraints=[],
-        memory_excerpt=None,
-    )
-    roles = {task.role for task in plan.tasks}
-    assert AgentRole.TECHNICAL in roles
-    assert AgentRole.BILLING in roles
 
 
 # ── Domain-aware subagent factory ─────────────────────────────────────────────
@@ -422,15 +361,12 @@ async def test_check_human_availability_always_unavailable():
 
 
 def test_check_human_availability_registered_internal_and_allowed():
-    from packages.agent.src.subagent_types import AgentRole
     from packages.tool_system.src.registry import TOOL_REGISTRY, ToolBoundary
-    from apps.agent_service.src.agent.conversation.conversation_planner import _tools_for_role
     from apps.agent_service.src.agent.conversation.subagents.escalation import DEFAULT_ALLOWED_TOOLS
 
     entry = TOOL_REGISTRY["check_human_availability"]
     assert entry.boundary is ToolBoundary.INTERNAL  # callable in-process this turn
     assert "check_human_availability" in DEFAULT_ALLOWED_TOOLS
-    assert "check_human_availability" in _tools_for_role(AgentRole.ESCALATION)
 
 
 @pytest.mark.asyncio
@@ -532,14 +468,11 @@ async def test_process_refund_always_succeeds():
 
 
 def test_process_refund_registered_internal_and_allowed():
-    from packages.agent.src.subagent_types import AgentRole
     from packages.tool_system.src.registry import TOOL_REGISTRY, ToolBoundary
-    from apps.agent_service.src.agent.conversation.conversation_planner import _tools_for_role
     from apps.agent_service.src.agent.conversation.subagents.billing import DEFAULT_ALLOWED_TOOLS
 
     assert TOOL_REGISTRY["process_refund"].boundary is ToolBoundary.INTERNAL
     assert "process_refund" in DEFAULT_ALLOWED_TOOLS
-    assert "process_refund" in _tools_for_role(AgentRole.BILLING)
 
 
 # ── Item 3: compliance critic skill ───────────────────────────────────────────
@@ -630,69 +563,6 @@ async def test_run_compliance_critic_uses_skill_persona():
 # ── Item 4: non-blocking profile update ───────────────────────────────────────
 
 @pytest.mark.asyncio
-async def test_on_approved_schedules_profile_update_without_blocking():
-    import asyncio
-
-    from apps.agent_service.src.agent.conversation import conversation_orchestrator as co
-    from apps.agent_service.src.agent.conversation.conversation_orchestrator import (
-        ConversationOrchestrator,
-    )
-    from apps.agent_service.src.agent.conversation.intent import IntentCategory, UrgencyLevel
-    from packages.agent.src.chat_types import ChatMessage, ChatMessageRole
-    from packages.agent.src.orchestration_types import (
-        ComplianceReview,
-        ConversationAgentInput,
-        FinalDecision,
-    )
-    from packages.agent.src.types import SessionContext
-
-    started = asyncio.Event()
-    release = asyncio.Event()
-
-    class _SlowMemory:
-        def __init__(self):
-            self.added = []
-
-        async def add_message(self, message):
-            self.added.append(message)
-
-        async def update_profile(self, **kwargs):
-            started.set()
-            await release.wait()  # block until the test lets it finish
-
-    orch = ConversationOrchestrator()
-    orch._memory = _SlowMemory()
-    orch._last_intent = _intent(IntentCategory.COMPLAINT, UrgencyLevel.MEDIUM)
-
-    ctx = SessionContext(tenant_id="demo-tenant", user_id="c", session_id="s", trace_id="s")
-    agent_input = ConversationAgentInput(
-        tenant_id="demo-tenant", customer_id="c", session_id="s",
-        message=ChatMessage(
-            tenant_id="demo-tenant", customer_id="c", session_id="s",
-            role=ChatMessageRole.USER, content="this is bad",
-        ),
-    )
-    decision = FinalDecision(
-        action="emit_or_execute_approved_payload",
-        response_text="ack",
-        approved_external_writes=[],
-        subagent_results=[],
-        compliance_review=ComplianceReview(approved=True, feedback="ok"),
-        reasoning_summary="",
-    )
-
-    # on_approved must return while update_profile is still blocked (non-blocking).
-    result = await orch.on_approved(agent_input, decision, ctx)
-    assert result == []
-    await asyncio.wait_for(started.wait(), timeout=1.0)  # it was scheduled
-    assert not release.is_set()  # and we returned before it completed
-    release.set()
-    # Drain the background task so it does not leak into other tests.
-    for task in list(co._BACKGROUND_TASKS):
-        await task
-
-
-@pytest.mark.asyncio
 async def test_background_profile_update_failure_is_swallowed():
     import asyncio
 
@@ -707,187 +577,4 @@ async def test_background_profile_update_failure_is_swallowed():
     assert len(co._BACKGROUND_TASKS) == 0
 
 
-# ── Item 5: LLM conversation planner ──────────────────────────────────────────
 
-def _planner_config():
-    from packages.agent.src.config import AgentConfig
-
-    return AgentConfig(
-        tenant_id="demo-tenant", name="c", instructions="t",
-        model="m", planner_model="pm", tools=["query_health", "query_playbooks"],
-    )
-
-
-class _PlannerLLM:
-    """Fake LLM returning a canned planner JSON string."""
-
-    def __init__(self, text):
-        self.text = text
-
-    async def complete(self, messages, **kwargs):
-        from apps.agent_service.src.agent.llm_client import LLMResponse
-        from packages.agent.src.types import LLMUsage
-
-        return LLMResponse(text=self.text, model="fake", usage=LLMUsage())
-
-
-class _RaisingLLM:
-    async def complete(self, messages, **kwargs):
-        raise RuntimeError("planner unreachable")
-
-
-def test_capability_catalog_uses_skill_descriptions_not_bodies():
-    from apps.agent_service.src.agent.conversation.capability_catalog import (
-        CONVERSATION_ROLES,
-        build_capability_catalog,
-        render_catalog_for_prompt,
-    )
-    from packages.agent.src.subagent_types import AgentRole
-
-    catalog = build_capability_catalog("demo-tenant")
-    roles = {cap.role for cap in catalog}
-    assert roles == set(CONVERSATION_ROLES)
-    # Signal-only roles are never selectable by the conversation planner.
-    assert AgentRole.HEALTH_ANALYSIS not in roles
-    assert AgentRole.OUTREACH_DRAFT not in roles
-
-    text = render_catalog_for_prompt(catalog)
-    # Descriptions/scope are present; full SOP section headers are not injected.
-    assert "role: billing" in text
-    assert "scope:" in text
-    assert "## Workflow" not in text  # not the full SKILL.md body
-
-
-@pytest.mark.asyncio
-async def test_llm_planner_selects_single_role(monkeypatch):
-    monkeypatch.setenv("CONVERSATION_LLM_PLANNER", "1")
-    from apps.agent_service.src.agent.conversation.conversation_planner import build_conversation_plan
-    from apps.agent_service.src.agent.conversation.intent import IntentCategory, UrgencyLevel
-    from packages.agent.src.subagent_types import AgentRole
-
-    llm = _PlannerLLM(
-        '{"roles": ["billing"], "needs_playbook": false, "rationale": "billing", '
-        '"confidence": 0.9}'
-    )
-    plan, _ = await build_conversation_plan(
-        message="question about my bill",
-        intent=_intent(IntentCategory.BILLING, UrgencyLevel.MEDIUM),
-        config=_planner_config(), tenant_constraints=[], memory_excerpt=None,
-        llm_client=llm,
-    )
-    roles = {task.role for task in plan.tasks}
-    assert roles == {AgentRole.BILLING}
-    assert "(llm)" in plan.reasoning_summary
-
-
-@pytest.mark.asyncio
-async def test_llm_planner_multi_role_parallel_and_playbook(monkeypatch):
-    monkeypatch.setenv("CONVERSATION_LLM_PLANNER", "1")
-    from apps.agent_service.src.agent.conversation.conversation_planner import build_conversation_plan
-    from apps.agent_service.src.agent.conversation.intent import IntentCategory, UrgencyLevel
-    from packages.agent.src.subagent_types import AgentRole
-
-    llm = _PlannerLLM(
-        '{"roles": ["technical", "billing"], "needs_playbook": true, '
-        '"rationale": "both", "confidence": 0.9}'
-    )
-    plan, _ = await build_conversation_plan(
-        message="login broke and I was double charged",
-        intent=_intent(IntentCategory.TECHNICAL, UrgencyLevel.MEDIUM),
-        config=_planner_config(), tenant_constraints=[], memory_excerpt=None,
-        llm_client=llm,
-    )
-    by_role = {task.role: task for task in plan.tasks}
-    assert AgentRole.PLAYBOOK_RETRIEVAL in by_role
-    tech = by_role[AgentRole.TECHNICAL]
-    bill = by_role[AgentRole.BILLING]
-    # Both answer tasks depend on playbook, and are mutually independent (parallel).
-    assert tech.depends_on == ["playbook"]
-    assert bill.depends_on == ["playbook"]
-    assert tech.id not in bill.depends_on and bill.id not in tech.depends_on
-
-
-@pytest.mark.asyncio
-async def test_llm_planner_forced_escalation_ignores_model(monkeypatch):
-    monkeypatch.setenv("CONVERSATION_LLM_PLANNER", "1")
-    from apps.agent_service.src.agent.conversation.conversation_planner import build_conversation_plan
-    from apps.agent_service.src.agent.conversation.intent import IntentCategory, UrgencyLevel
-    from packages.agent.src.subagent_types import AgentRole
-
-    # Model tries to route to general; trusted code forces ESCALATION.
-    llm = _PlannerLLM(
-        '{"roles": ["general"], "needs_playbook": false, "rationale": "x", '
-        '"confidence": 0.99}'
-    )
-    plan, _ = await build_conversation_plan(
-        message="get me a human right now",
-        intent=_intent(IntentCategory.ESCALATION, UrgencyLevel.HIGH),
-        config=_planner_config(), tenant_constraints=[], memory_excerpt=None,
-        llm_client=llm,
-    )
-    roles = {task.role for task in plan.tasks}
-    assert AgentRole.ESCALATION in roles
-    assert AgentRole.GENERAL not in roles
-    assert "forced-escalation" in plan.reasoning_summary
-
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize(
-    "bad_json",
-    [
-        "not json",
-        '{"roles": [], "needs_playbook": false, "confidence": 0.9}',  # empty
-        '{"roles": ["health_analysis"], "needs_playbook": false, "confidence": 0.9}',  # signal-only
-        '{"roles": ["billing", "billing"], "needs_playbook": false, "confidence": 0.9}',  # dup
-        '{"roles": ["general","technical","billing"], "needs_playbook": false, "confidence": 0.9}',  # too many
-        '{"roles": ["billing"], "needs_playbook": false, "confidence": 0.2}',  # low conf
-    ],
-)
-async def test_llm_planner_invalid_output_falls_back(monkeypatch, bad_json):
-    monkeypatch.setenv("CONVERSATION_LLM_PLANNER", "1")
-    from apps.agent_service.src.agent.conversation.conversation_planner import build_conversation_plan
-    from apps.agent_service.src.agent.conversation.intent import IntentCategory, UrgencyLevel
-
-    plan, _ = await build_conversation_plan(
-        message="my app crashed with a 500 error",
-        intent=_intent(IntentCategory.TECHNICAL, UrgencyLevel.MEDIUM),
-        config=_planner_config(), tenant_constraints=[], memory_excerpt=None,
-        llm_client=_PlannerLLM(bad_json),
-    )
-    assert "deterministic" in plan.reasoning_summary
-
-
-@pytest.mark.asyncio
-async def test_llm_planner_exception_falls_back(monkeypatch):
-    monkeypatch.setenv("CONVERSATION_LLM_PLANNER", "1")
-    from apps.agent_service.src.agent.conversation.conversation_planner import build_conversation_plan
-    from apps.agent_service.src.agent.conversation.intent import IntentCategory, UrgencyLevel
-    from packages.agent.src.subagent_types import AgentRole
-
-    plan, _ = await build_conversation_plan(
-        message="my app crashed with a 500 error",
-        intent=_intent(IntentCategory.TECHNICAL, UrgencyLevel.MEDIUM),
-        config=_planner_config(), tenant_constraints=[], memory_excerpt=None,
-        llm_client=_RaisingLLM(),
-    )
-    roles = {task.role for task in plan.tasks}
-    assert AgentRole.TECHNICAL in roles  # deterministic router picked technical
-    assert "deterministic" in plan.reasoning_summary
-
-
-@pytest.mark.asyncio
-async def test_fast_path_preserved_without_llm(monkeypatch):
-    monkeypatch.setenv("CONVERSATION_LLM_PLANNER", "1")
-    from apps.agent_service.src.agent.conversation.conversation_planner import build_conversation_plan
-    from apps.agent_service.src.agent.conversation.intent import IntentCategory, UrgencyLevel
-    from packages.agent.src.subagent_types import AgentRole
-
-    # A simple low-urgency greeting must never invoke the LLM planner.
-    plan, _ = await build_conversation_plan(
-        message="hello there",
-        intent=_intent(IntentCategory.GREETING, UrgencyLevel.LOW),
-        config=_planner_config(), tenant_constraints=[], memory_excerpt=None,
-        llm_client=_RaisingLLM(),  # would raise if called
-    )
-    assert [task.role for task in plan.tasks] == [AgentRole.GENERAL]
-    assert "fast path" in plan.reasoning_summary.lower()

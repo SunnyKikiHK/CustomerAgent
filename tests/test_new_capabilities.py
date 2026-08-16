@@ -8,7 +8,6 @@ import uuid
 import pytest
 
 from apps.agent_service.src.agent.conversation.intent import IntentCategory, IntentRecognizer, UrgencyLevel
-from apps.agent_service.src.agent.conversation.conversation_planner import build_conversation_plan
 from apps.agent_service.src.agent.runtime.monitor import get_performance_monitor
 from apps.agent_service.src.agent.runtime.skills import (
     SkillManager,
@@ -105,29 +104,6 @@ def test_signal_planner_builds_dependency_chain(tenant_config):
     )
     outreach = next(task for task in plan.tasks if task.role.value == "outreach_draft")
     assert outreach.depends_on
-
-
-@pytest.mark.asyncio
-async def test_conversation_fast_path_plan(tenant_config):
-    from apps.agent_service.src.agent.conversation.intent import IntentResult
-
-    intent = IntentResult(
-        intent=IntentCategory.GREETING,
-        confidence=0.9,
-        urgency=UrgencyLevel.LOW,
-        entities={},
-        reasoning="greeting",
-    )
-    # Fast path is deterministic and never calls the LLM planner.
-    plan, _ = await build_conversation_plan(
-        message="Hello",
-        intent=intent,
-        config=tenant_config,
-        tenant_constraints=[],
-        memory_excerpt=None,
-    )
-    assert len(plan.tasks) == 1
-    assert plan.tasks[0].role.value == "general"
 
 
 def test_signal_queue_dedupes_payloads():

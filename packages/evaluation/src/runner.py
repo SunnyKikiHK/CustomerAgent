@@ -117,7 +117,7 @@ async def _run_one_live(case: EvalCase) -> tuple[str, float, int, list]:
     from packages.observability.src.collector import collect_spans
 
     from apps.agent_service.src.agent.conversation.conversation_orchestrator import (
-        run_conversation_agent,
+        run_conversation_loop,
     )
 
     session_id = f"eval-{case.id}-{uuid.uuid4().hex[:6]}"
@@ -143,12 +143,12 @@ async def _run_one_live(case: EvalCase) -> tuple[str, float, int, list]:
     started = time.monotonic()
     with collect_spans() as spans:
         try:
-            response = await run_conversation_agent(agent_input, ctx)
+            response = await run_conversation_loop(agent_input, ctx)
             text = response.text or ""
             tokens = (
-                getattr(response, "planner_tokens", 0)
-                + getattr(response, "executor_tokens", 0)
-                + getattr(response, "critic_tokens", 0)
+                (getattr(response, "planner_tokens", 0) or 0)
+                + (getattr(response, "executor_tokens", 0) or 0)
+                + (getattr(response, "critic_tokens", 0) or 0)
             )
         except Exception as exc:  # a crash is itself an evaluation signal
             text = f"[pipeline error: {type(exc).__name__}]"
