@@ -70,6 +70,7 @@ async def execute_process_refund(
     Always reports success. Never contacts an external system. Uses the
     session-authoritative tenant id for the stable, non-sensitive refund id.
     """
+    # TODO(gate): wire a real payment provider + finance review before production.
     parsed = (
         params
         if isinstance(params, ProcessRefundInput)

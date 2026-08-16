@@ -61,6 +61,7 @@ async def execute_escalate_to_human(
     ctx: "SessionContext" | None = None,
 ) -> EscalateToHumanOutput:
     """Validate an escalation request without contacting a provider (Phase 1)."""
+    # TODO(gate): replace the mock provider with real human paging before production.
     parsed = (
         params
         if isinstance(params, EscalateToHumanInput)

@@ -88,7 +88,7 @@ TenantSignalScanWorkflow：run_all_detectors → 每个信号起一个子工作�
 `packages/knowledge_service/src/nps.py` + `apps/temporal_worker/src/nps_workflows.py`：
 
 - **问卷下发**：`NpsCampaignWorkflow` → `select_nps_candidates`（选候选客户）→
-  `create_and_send_survey`（建问卷 + 标记已发）。
+  `create_and_send_survey`（建问卷 + 经门控 `send_email` 路径发送邀请邮件，发送成功才标记已发）。
 - **评分提交**：`POST /nps/surveys/{id}/response`，**评分只经 API 进入系统（绝不经过 LLM）**。
 - **确定性分类**：promoter 9-10 / passive 7-8 / detractor 0-6（`classify_score`）。
 - **差评联动**：detractor（0-6）→ 入队 `nps_detractor` 信号 → 通知 CSM 跟进（**不自动回客户**）。
@@ -105,7 +105,8 @@ TenantSignalScanWorkflow：run_all_detectors → 每个信号起一个子工作�
 - **聚合快照**：客户数、MRR/ARR、健康分布、续约管道（30/60/90 天）、NPS、未闭环信号。
 - **叙事生成**：`QbrReportAgent` 从快照写执行摘要（胜点 / 风险 / 建议 / 续约展望 / CSM 优先项）。
 - **合规审查**：叙事在持久化前过 `ComplianceCriticAgent`。
-- **投递**：`resolve_qbr_recipient` 解析收件 CSM → `mark_qbr_delivered` 标记已投递。
+- **投递**：`resolve_qbr_recipient` 解析收件 CSM → `deliver_qbr_email` 经门控 `send_email`
+  路径发送报告并标记已投递（发送失败则标记 `failed`）。
 
 ### 5.3 邮件发送（Email）
 
@@ -124,6 +125,9 @@ TenantSignalScanWorkflow：run_all_detectors → 每个信号起一个子工作�
   Gmail API；无凭据时**失败关闭**（抛错重试，绝不静默丢信）。
 - **CSM 通知**（`packages/tool_system/src/tools/notify_csm.py`）：`nps_detractor` 一律把邮件
   重写到 `EMAIL_FROM`（平台自己的 CSM 邮箱），**只通知 CSM，绝不回客户**。
+- **复用门控路径**（`apps/temporal_worker/src/email_delivery.py::send_approved_email`）：
+  NPS 问卷邀请邮件与 QBR 报告投递现在都复用同一套「审批持久化 → 门控 MCP 网关 → 提供方」
+  的 `send_email` 路径发送，而不是 mock / 仅记录状态。
 
 ### 5.4 外部写入安全门控
 
@@ -138,17 +142,18 @@ TenantSignalScanWorkflow：run_all_detectors → 每个信号起一个子工作�
 
 以下是当前实现里明确"第一版简化 / 桩实现 / 未接线"之处，均可作为后续迭代方向：
 
-1. **NPS 问卷邀请邮件是 mock 的**：`create_and_send_survey` 只建问卷 + 标记"已发"，
-   **没有真正发出邀请邮件**（代码注释明说"实际邮件发送不在本实现范围内"）。
+1. ~~**NPS 问卷邀请邮件是 mock 的**~~ → **已解决**：`create_and_send_survey` 现在经门控
+   `send_email` 路径真正发送邀请邮件（`EMAIL_PROVIDER=mock/console/google`），发送成功才标记已发。
 
-2. **QBR 报告邮件是"记录投递"而非"真发送"**：`GenerateTenantQbrWorkflow` 只调用
-   `mark_qbr_delivered` 标记状态，**未复用合规门控的 `send_email` 路径真正投递**。
+2. ~~**QBR 报告邮件是"记录投递"而非"真发送"**~~ → **已解决**：`deliver_qbr_email` 现在复用
+   合规门控的 `send_email` 路径真正投递报告并标记状态，发送失败则标记 `failed`。
 
 3. **NPS 候选人选择过于朴素**：`select_nps_candidates` 是"取前 50 个客户"，没有
    "跳过近期已调查 / 只挑足够健康"等策略。
 
-4. **无定时调度**：检测器只经 `POST /signals/scan` **按需**运行；QBR/NPS 无 cron / 调度，
-   不会自动按周期触发。
+4. ~~**无定时调度**~~ → **已解决（需配置租户白名单）**：`apps/temporal_worker/src/worker.py`
+   可为扫描（`SIGNAL_SCAN_TENANTS`）、NPS 外呼（`NPS_CAMPAIGN_TENANTS`）、QBR
+   （`QBR_TENANTS`）创建 Temporal Schedule；默认不启用（白名单为空），需显式配置才自动触发。
 
 5. **检测器覆盖有限**：只有续约/健康/用量/工单/负面情绪，**没有流失预测模型、增购/扩展信号、
    更细粒度的产品使用行为信号**。
@@ -209,6 +214,6 @@ flowchart TD
 
 信号系统已具备一条完整闭环：**多来源触发 → 检测/归一化 → Temporal 持久化编排 →
 SignalOrchestrator（P-E-R）→ 合规审查 → 门控式外部写（邮件 / CSM 通知）**，并落地了
-NPS 评分/聚合、QBR 生成、真实 Gmail 集成等关键能力。当前主要的"缺"集中在**邮件真实投递的
-最后一公里（问卷邀请、QBR 投递仍为 mock/记录）**、**缺少定时调度与长等待跟进**、以及
-**检测器/规划器/人工与退款集成的深度**上。
+NPS 评分/聚合、QBR 生成、问卷邀请与 QBR 报告的门控式邮件投递、以及扫描/NPS/QBR 的定时调度。
+当前主要的"缺"集中在**检测器/规划器/人工与退款集成的深度**、以及**Temporal 长等待跟进**
+（到期自动提醒）上。

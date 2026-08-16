@@ -72,6 +72,7 @@ async def execute_check_human_availability(
     tenant mismatch returns the same unavailable result rather than leaking any
     other tenant's state.
     """
+    # TODO(gate): replace with a real availability lookup before production use.
     parsed = (
         params
         if isinstance(params, CheckHumanAvailabilityInput)

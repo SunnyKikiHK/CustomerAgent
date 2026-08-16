@@ -37,11 +37,11 @@ class NpsCampaignWorkflow:
         for candidate in candidates:
             result = await workflow.execute_activity(
                 nps_activities.create_and_send_survey,
-                args=[tenant_id, candidate["customer_id"]],
-                start_to_close_timeout=timedelta(seconds=30),
+                args=[tenant_id, candidate["customer_id"], candidate.get("email")],
+                start_to_close_timeout=timedelta(minutes=2),
                 retry_policy=_QUICK_RETRY,
             )
-            if result.get("created"):
+            if result.get("sent"):
                 sent.append(result["survey_id"])
 
         return {"tenant_id": tenant_id, "candidates": len(candidates), "sent": len(sent)}

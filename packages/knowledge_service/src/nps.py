@@ -214,6 +214,25 @@ async def tenant_nps(*, tenant_id: str) -> dict[str, Any]:
     return calculate_nps([row["score"] for row in rows])
 
 
+async def recently_surveyed_customer_ids(
+    *, tenant_id: str, within_days: int = 90
+) -> set[str]:
+    """Return customer ids surveyed within ``within_days`` (empty set on DB error)."""
+    try:
+        rows = await fetch_all(
+            """
+            select distinct customer_id::text
+            from nps_surveys
+            where created_at >= now() - ($1 || ' days')::interval
+            """,
+            str(within_days),
+            tenant_id=tenant_id,
+        )
+    except PostgresConfigError:
+        return set()
+    return {row["customer_id"] for row in rows}
+
+
 __all__ = [
     "DETRACTOR_MAX",
     "PROMOTER_MIN",
@@ -224,4 +243,5 @@ __all__ = [
     "record_response",
     "survey_history",
     "tenant_nps",
+    "recently_surveyed_customer_ids",
 ]

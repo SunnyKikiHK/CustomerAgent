@@ -3,8 +3,9 @@
 > 面向客户的实时聊天系统。客户发来一条消息，系统经过意图识别、角色路由、子代理执行、
 > 合规审查后，返回（或流式返回）一条合规、有据可依的回复，并把该轮沉淀进客户画像。
 >
-> 本文档先描述**当前已接线的架构**（Planner → Executor → Reflector），再引入一套
-> **用于降低延迟的新架构**（GeneralAgent / Orchestrator-Workers，代码已就绪但尚未接入）。
+> 本文档描述对话系统从 **Planner → Executor → Reflector（P-E-R）** 到
+> **GeneralAgent / Orchestrator-Workers** 的迁移。当前**已接入运行路径的是
+> Orchestrator-Workers**（§3）；§2 的 P-E-R 流水线为**已移除的旧架构**，仅作参考保留。
 
 ---
 
@@ -19,7 +20,7 @@
 
 ---
 
-## 2. 当前架构（现状）
+## 2. 旧架构（Planner → Executor → Reflector，已移除）
 
 ### 2.1 请求入口
 
@@ -150,7 +151,7 @@ planner 模型，输出结构化 `ComplianceReview`。
 
 ---
 
-## 3. 新架构：降低延迟的 GeneralAgent / Orchestrator-Workers
+## 3. 当前架构：降低延迟的 GeneralAgent / Orchestrator-Workers
 
 > 目标：用**更少的 LLM 往返** + **真流式** 显著降低每轮延迟与首字延迟，同时**不牺牲**合规
 > 与租户隔离。
@@ -196,7 +197,7 @@ flowchart TD
 
 ### 3.3 与当前架构的对比
 
-| 维度 | 当前（Planner→Executor→Reflector） | 新架构（GeneralAgent / Orchestrator-Workers） |
+| 维度 | 旧（Planner→Executor→Reflector，已移除） | 当前（GeneralAgent / Orchestrator-Workers） |
 |---|---|---|
 | 意图/实体识别 | 2 次独立 LLM 调用 | 移除（编排者直接理解） |
 | 角色路由 | 独立 LLM 规划器（+ 确定性回退） | 移除（编排者自行决定是否委托） |
@@ -232,13 +233,11 @@ flowchart TD
 
 ### 3.6 迁移/落地要点
 
-- 目前 `conversation_loop.py` / `delegates.py` 与测试 `tests/test_conversation_loop.py`
-  **已就绪但未接入运行路径**：`chat_handler.py` 仍走 `run_conversation_agent` →
-  `ConversationOrchestrator.run()`。
-- 落地时需把 `handle_chat_turn`（及 `stream_approved_response`）切到 `ConversationLoop.run_stream()`，
-  并保留 `on_approved` 的非阻塞画像更新 + 信号桥接契约。
-- 建议用 `CONVERSATION_LLM_PLANNER=0` 之类的开关做 A/B，或保留确定性路由作为回退，
-  待稳定网络上重跑延迟评测确认增量。
+- **已接入**：`chat_handler.py` 现走 `run_conversation_loop` / `stream_conversation_loop` →
+  `ConversationLoop`（GeneralAgent ReAct）。旧的 `run_conversation_agent`、`conversation_planner.py`、
+  `llm_planner.py`、`capability_catalog.py` 均已删除。
+- `on_approved` 的非阻塞画像更新 + 信号桥接契约保持不变。
+- 待稳定网络上重跑延迟评测，确认增量。
 
 ---
 

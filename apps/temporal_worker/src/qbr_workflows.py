@@ -4,9 +4,10 @@ Deterministic coordination only:
 
     1. Generate the report (aggregate facts -> narrative -> compliance -> persist).
     2. Resolve the recipient CSM.
-    3. Mark the report delivered (the email send itself is a compliance-gated
-       action reused from the signal path; the first implementation records the
-       delivery so the flow can be exercised end to end).
+    3. Deliver the report by sending the narrative through the gated
+       ``send_email`` action path (approval -> MCP gateway -> provider), then
+       mark it delivered. With ``EMAIL_PROVIDER=console`` the email is logged
+       locally; with ``google`` it fails closed until Gmail credentials exist.
 
 The heavy/nondeterministic work is in ``qbr_activities``.
 """
@@ -48,15 +49,20 @@ class GenerateTenantQbrWorkflow:
         )
         recipient_email = recipient.get("recipient_email")
 
-        await workflow.execute_activity(
-            qbr_activities.mark_qbr_delivered,
-            args=[tenant_id, report["report_id"], recipient_email],
-            start_to_close_timeout=timedelta(seconds=30),
+        delivery = await workflow.execute_activity(
+            qbr_activities.deliver_qbr_email,
+            args=[
+                tenant_id,
+                report["report_id"],
+                report.get("report_markdown", ""),
+                recipient_email,
+            ],
+            start_to_close_timeout=timedelta(minutes=2),
             retry_policy=_QUICK_RETRY,
         )
         return {
             "tenant_id": tenant_id,
-            "status": "delivered",
+            "status": delivery.get("status", "delivered"),
             "report_id": report["report_id"],
             "recipient_email": recipient_email,
         }

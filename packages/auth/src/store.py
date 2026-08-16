@@ -126,7 +126,11 @@ async def upsert_membership(
 
 
 async def list_qbr_recipients(tenant_id: str) -> list[User]:
-    """Return users who should receive QBR reports for a tenant."""
+    """Return users who should receive QBR reports for a tenant, CSM first.
+
+    Ordering puts the assigned CSM (``m.role = 'csm'``) ahead of other recipients,
+    then sorts by full name, so ``recipients[0]`` deterministically is the CSM.
+    """
     pool = await get_pool()
     async with pool.acquire() as conn:
         rows = await conn.fetch(
@@ -136,6 +140,7 @@ async def list_qbr_recipients(tenant_id: str) -> list[User]:
             from tenant_memberships m
             join users u on u.id = m.user_id
             where m.tenant_id = $1::uuid and m.receives_qbr = true and u.is_active = true
+            order by case when m.role = 'csm' then 0 else 1 end, u.full_name
             """,
             tenant_id,
         )

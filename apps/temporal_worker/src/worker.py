@@ -76,6 +76,78 @@ async def _ensure_scan_schedule(client, tenant_ids: list[str]) -> None:
             logger.info("Scan schedule for %s not created (%s)", tenant_id, type(exc).__name__)
 
 
+async def _ensure_nps_schedule(client, tenant_ids: list[str]) -> None:
+    """Create/replace a Temporal Schedule that runs the NPS campaign per tenant.
+
+    Best-effort like the scan schedule: creation failures are logged and ignored.
+    """
+    from temporalio.client import (
+        Schedule,
+        ScheduleActionStartWorkflow,
+        ScheduleIntervalSpec,
+        ScheduleSpec,
+    )
+    from datetime import timedelta
+
+    interval_days = int(os.getenv("NPS_CAMPAIGN_INTERVAL_DAYS", "30"))
+    for tenant_id in tenant_ids:
+        schedule_id = f"nps-campaign-schedule:{tenant_id}"
+        try:
+            await client.create_schedule(
+                schedule_id,
+                Schedule(
+                    action=ScheduleActionStartWorkflow(
+                        NpsCampaignWorkflow.run,
+                        tenant_id,
+                        id=f"nps:{tenant_id}",
+                        task_queue=task_queue(),
+                    ),
+                    spec=ScheduleSpec(
+                        intervals=[ScheduleIntervalSpec(every=timedelta(days=interval_days))]
+                    ),
+                ),
+            )
+            logger.info("Created NPS schedule for tenant %s", tenant_id)
+        except Exception as exc:
+            logger.info("NPS schedule for %s not created (%s)", tenant_id, type(exc).__name__)
+
+
+async def _ensure_qbr_schedule(client, tenant_ids: list[str]) -> None:
+    """Create/replace a Temporal Schedule that runs the QBR workflow per tenant.
+
+    Best-effort like the scan schedule: creation failures are logged and ignored.
+    """
+    from temporalio.client import (
+        Schedule,
+        ScheduleActionStartWorkflow,
+        ScheduleIntervalSpec,
+        ScheduleSpec,
+    )
+    from datetime import timedelta
+
+    interval_days = int(os.getenv("QBR_INTERVAL_DAYS", "90"))
+    for tenant_id in tenant_ids:
+        schedule_id = f"qbr-schedule:{tenant_id}"
+        try:
+            await client.create_schedule(
+                schedule_id,
+                Schedule(
+                    action=ScheduleActionStartWorkflow(
+                        GenerateTenantQbrWorkflow.run,
+                        tenant_id,
+                        id=f"qbr:{tenant_id}",
+                        task_queue=task_queue(),
+                    ),
+                    spec=ScheduleSpec(
+                        intervals=[ScheduleIntervalSpec(every=timedelta(days=interval_days))]
+                    ),
+                ),
+            )
+            logger.info("Created QBR schedule for tenant %s", tenant_id)
+        except Exception as exc:
+            logger.info("QBR schedule for %s not created (%s)", tenant_id, type(exc).__name__)
+
+
 async def main() -> None:
     """Connect to Temporal and run the worker until interrupted."""
     from temporalio.client import Client
@@ -87,6 +159,15 @@ async def main() -> None:
     scan_tenants = [t.strip() for t in os.getenv("SIGNAL_SCAN_TENANTS", "").split(",") if t.strip()]
     if scan_tenants:
         await _ensure_scan_schedule(client, scan_tenants)
+
+    # Optional NPS campaign + QBR schedules (env-gated tenant allowlists).
+    nps_tenants = [t.strip() for t in os.getenv("NPS_CAMPAIGN_TENANTS", "").split(",") if t.strip()]
+    if nps_tenants:
+        await _ensure_nps_schedule(client, nps_tenants)
+
+    qbr_tenants = [t.strip() for t in os.getenv("QBR_TENANTS", "").split(",") if t.strip()]
+    if qbr_tenants:
+        await _ensure_qbr_schedule(client, qbr_tenants)
 
     worker = Worker(
         client,
