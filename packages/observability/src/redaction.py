@@ -20,6 +20,10 @@ _BLOCKED_KEYS = frozenset(
         "secret",
         "client_secret",
         "credentials",
+        # Raw content that can carry PII or full customer/LLM text.
+        "email_body",
+        "prompt",
+        "messages",
     }
 )
 
