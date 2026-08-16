@@ -45,6 +45,30 @@ def test_parse_non_json_returns_defenced_text():
     assert "```" not in parsed["markdown"]
 
 
+def test_parse_prose_plus_tool_call_json_recovers_tool_calls():
+    # Reasoning prose followed by a raw JSON tool call must execute the tool,
+    # not leak the raw blob to the customer.
+    raw = (
+        "I'll delegate this refund request to the Billing specialist.\n\n"
+        '{"tool_calls": [{"name": "delegate_billing", "arguments": {"task": "refund"}}],'
+        ' "markdown": "", "data": {}}'
+    )
+    parsed = ReActLoop._parse_model_response(raw)
+    assert parsed["tool_calls"] == [
+        {"name": "delegate_billing", "arguments": {"task": "refund"}}
+    ]
+    assert "tool_calls" not in parsed["markdown"]
+
+
+def test_parse_prose_plus_trailing_json_strips_blob():
+    # Prose with a trailing non-tool JSON blob: only the prose is the reply.
+    raw = 'Here is your answer.\n\n{"some": "data", "extra": 1}'
+    parsed = ReActLoop._parse_model_response(raw)
+    assert parsed["tool_calls"] == []
+    assert parsed["markdown"] == "Here is your answer."
+    assert "{" not in parsed["markdown"]
+
+
 # ── 2. Empty-markdown must not leak raw JSON ─────────────────────────────────
 
 def test_valid_json_empty_markdown_yields_empty_not_blob():

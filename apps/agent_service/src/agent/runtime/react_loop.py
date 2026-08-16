@@ -132,14 +132,21 @@ class ReActLoop:
             }
         """
         cleaned = _strip_code_fence(text)
-        try:
-            payload = json.loads(cleaned)
-        except json.JSONDecodeError:
-            # Not a JSON object: treat the (de-fenced) text as the markdown reply.
-            # Never surface a raw ```json blob to the customer.
-            return {"markdown": cleaned, "data": {}, "tool_calls": []}
+        payload = _try_json(cleaned)
         if not isinstance(payload, dict):
-            return {"markdown": cleaned, "data": {}, "tool_calls": []}
+            # The model may have emitted prose followed by a JSON tool-call object
+            # (e.g. "I'll delegate this...\n\n{\"tool_calls\": [...]}"). Recover the
+            # embedded object so tool calls are still detected and the raw blob is
+            # never surfaced to the customer.
+            inner = _extract_json_object(cleaned)
+            if inner is not None:
+                candidate = _try_json(inner)
+                if isinstance(candidate, dict) and candidate.get("tool_calls"):
+                    payload = candidate
+        if not isinstance(payload, dict):
+            # No tool-call JSON: the (de-fenced) prose is the reply. Strip any
+            # trailing JSON fragment so a raw blob never leaks to the customer.
+            return {"markdown": _strip_trailing_json(cleaned), "data": {}, "tool_calls": []}
 
         tool_calls = payload.get("tool_calls", [])
         if not isinstance(tool_calls, list):
@@ -219,6 +226,59 @@ def _strip_code_fence(text: str) -> str:
     if lines and lines[-1].strip().startswith("```"):
         lines = lines[:-1]
     return "\n".join(lines).strip()
+
+
+def _try_json(text: str) -> Any:
+    """Parse ``text`` as JSON, returning None on failure."""
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError:
+        return None
+
+
+def _extract_json_object(text: str) -> str | None:
+    """Return the first balanced ``{...}`` JSON object in ``text``, else None.
+
+    Recovers a tool-call object a model emitted alongside prose so the tool call
+    is executed instead of leaking raw JSON to the customer.
+    """
+    source = text or ""
+    start = source.find("{")
+    if start == -1:
+        return None
+    depth = 0
+    in_str = False
+    escaped = False
+    for i in range(start, len(source)):
+        ch = source[i]
+        if in_str:
+            if escaped:
+                escaped = False
+            elif ch == "\\":
+                escaped = True
+            elif ch == '"':
+                in_str = False
+            continue
+        if ch == '"':
+            in_str = True
+        elif ch == "{":
+            depth += 1
+        elif ch == "}":
+            depth -= 1
+            if depth == 0:
+                return source[start : i + 1]
+    return None
+
+
+def _strip_trailing_json(text: str) -> str:
+    """Strip a trailing ``{...}`` JSON fragment from prose (best-effort)."""
+    stripped = (text or "").rstrip()
+    if not stripped.endswith("}"):
+        return stripped
+    brace = stripped.rfind("{")
+    if brace <= 0:
+        return stripped
+    return stripped[:brace].rstrip()
 
 
 def _redact_for_audit(value: dict[str, Any]) -> dict[str, Any]:
