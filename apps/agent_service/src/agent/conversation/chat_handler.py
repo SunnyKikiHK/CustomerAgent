@@ -6,7 +6,7 @@ from packages.agent.src.chat_types import ChatRequest, ChatResponse, ChatMessage
 from packages.agent.src.orchestration_types import ConversationAgentInput
 from packages.agent.src.types import SessionContext
 
-from apps.agent_service.src.agent.conversation.conversation_orchestrator import run_conversation_agent
+from apps.agent_service.src.agent.conversation.conversation_orchestrator import run_conversation_loop
 from apps.agent_service.src.agent.conversation.streaming import stream_approved_response
 
 
@@ -21,7 +21,7 @@ async def handle_chat_turn(request: ChatRequest, ctx: SessionContext):
     )
     if request.stream:
         return stream_approved_response(agent_input, ctx)
-    response = await run_conversation_agent(agent_input, ctx)
+    response = await run_conversation_loop(agent_input, ctx)
     return ChatResponse(
         tenant_id=request.tenant_id,
         customer_id=request.customer_id,

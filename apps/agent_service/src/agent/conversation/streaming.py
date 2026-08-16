@@ -1,4 +1,4 @@
-"""Streaming-safe emission with critic approval gate."""
+"""Streaming-safe emission for the GeneralAgent conversation loop."""
 
 from __future__ import annotations
 
@@ -9,7 +9,9 @@ from collections.abc import AsyncIterator
 from packages.agent.src.orchestration_types import ConversationAgentInput
 from packages.agent.src.types import SessionContext
 
-from apps.agent_service.src.agent.conversation.conversation_orchestrator import run_conversation_agent
+from apps.agent_service.src.agent.conversation.conversation_orchestrator import (
+    stream_conversation_loop,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -18,16 +20,21 @@ async def stream_approved_response(
     agent_input: ConversationAgentInput,
     ctx: SessionContext,
 ) -> AsyncIterator[str]:
-    """Stream progress events and commit only the critic-approved final answer.
+    """Stream the GeneralAgent loop's final answer as SSE events.
 
-    Any unexpected failure (LLM outage, DNS, timeout) is converted into an SSE
-    ``error`` event so the UI can leave the "Planning response" spinner instead
-    of hanging forever when the ASGI stream aborts.
+    Yields a single ``status`` event, then forwards each real text delta from
+    ``stream_conversation_loop`` as a ``token`` event, and closes with a ``done``
+    event carrying the full accumulated text. Any unexpected failure (LLM outage,
+    DNS, timeout) is converted into an SSE ``error`` event so the UI can leave the
+    "Planning response" spinner instead of hanging forever when the ASGI stream
+    aborts.
     """
-    yield _sse("status", {"phase": "planner", "message": "Planning response"})
+    yield _sse("status", {"phase": "orchestrator", "message": "Planning response"})
+    chunks: list[str] = []
     try:
-        yield _sse("status", {"phase": "executor", "message": "Running specialists"})
-        response = await run_conversation_agent(agent_input, ctx)
+        async for delta in stream_conversation_loop(agent_input, ctx):
+            chunks.append(delta)
+            yield _sse("token", {"text": delta})
     except Exception as exc:  # pragma: no cover - live network failures
         logger.exception("chat stream failed for session %s", ctx.session_id)
         yield _sse(
@@ -41,26 +48,7 @@ async def stream_approved_response(
         )
         return
 
-    if not response.approved:
-        yield _sse(
-            "error",
-            {
-                "approved": False,
-                "message": response.text,
-                "feedback": response.feedback,
-                "action": (
-                    response.final_decision.action
-                    if response.final_decision is not None
-                    else "blocked"
-                ),
-            },
-        )
-        return
-
-    yield _sse("status", {"phase": "reflector", "message": "Critic approved response"})
-    for chunk in _chunk_text(response.text):
-        yield _sse("token", {"text": chunk})
-    yield _sse("done", {"approved": True, "text": response.text})
+    yield _sse("done", {"approved": True, "text": "".join(chunks)})
 
 
 def _user_facing_error(exc: Exception) -> str:
@@ -77,10 +65,6 @@ def _user_facing_error(exc: Exception) -> str:
     if "auth" in text or "401" in text or "api key" in text:
         return "The LLM provider rejected the API key. Check OPENROUTER_API_KEY."
     return f"The assistant failed while generating a reply ({name}). Please try again."
-
-
-def _chunk_text(text: str, size: int = 40) -> list[str]:
-    return [text[index : index + size] for index in range(0, len(text), size)] or [""]
 
 
 def _sse(event: str, payload: dict) -> str:
