@@ -27,8 +27,8 @@ change is conversation-only.
 customer turn
    │
    ▼
-ConversationOrchestrator.run_stream()          # SSE entry (streaming clients)
-   │   .run()                                  # non-streaming entry (eval/tests)
+ConversationOrchestrator.run_stream()          # SSE entry (streaming clients) → stream_approved_response()
+   │   .run()                                  # non-streaming entry (eval/tests) → run_conversation_loop()
    ▼
 ConversationLoop  (GeneralAgent, MAX_REACT_LOOPS = 6)
    │
@@ -48,7 +48,7 @@ ConversationLoop  (GeneralAgent, MAX_REACT_LOOPS = 6)
    ▼
 LLMClient.stream()  → final customer answer, token-by-token    (planner.* span)
    ▼
-on_approved()  → non-blocking profile update + conversation→signal bridge (unchanged)
+_apply_loop_side_effects()  → non-blocking profile update + conversation→signal bridge (unchanged)
 ```
 
 ### Key modules
@@ -80,8 +80,8 @@ on_approved()  → non-blocking profile update + conversation→signal bridge (u
 - **Signal system** — `SignalOrchestrator`, `run_compliance_critic`, and the signal
   `ComplianceCriticAgent` are untouched.
 - **Class/entry contracts** — `ConversationOrchestrator` (subclasses
-  `BaseOrchestrator`, `supports_external_writes=False`), `run_conversation_agent`,
-  `on_approved` (non-blocking profile update + signal bridge), and the SSE route in
+  `BaseOrchestrator`, `supports_external_writes=False`), `run_conversation_loop` /
+  `_apply_loop_side_effects` (non-blocking profile update + signal bridge), and the SSE route in
   `apps/api_gateway/src/routes/chat.py`.
 
 ## What changed

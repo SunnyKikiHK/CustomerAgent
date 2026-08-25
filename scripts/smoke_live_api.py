@@ -4,8 +4,8 @@ Verifies the backend actually reaches the real LLM (OpenRouter, key loaded from
 config.sh) and runs full chat turns end-to-end. Exercises:
 
   1. Real intent classification (a genuine LLM completion, not a local fallback).
-  2. A refund chat turn (planner -> executor -> critic); should engage the billing
-     specialist and its process_refund prototype.
+  2. A refund chat turn through the GeneralAgent loop; should engage the billing
+     specialist (via `delegate_billing`) and its process_refund prototype.
   3. An escalation chat turn; should engage the escalation specialist and its
      check_human_availability prototype ("no human ... available" in the reply).
 

@@ -11,15 +11,15 @@ directory containing `config.sh`).
 
 ## System documentation
 
-Two Chinese walkthroughs describe the two top-level systems:
+Two walkthroughs describe the two top-level systems:
 
-- `note/conversation_system_zh.md` — 对话系统：当前架构（Planner→Executor→Reflector）
-  的功能与架构，以及一套用于降低延迟的新架构（GeneralAgent / Orchestrator-Workers）。
+- `note/conversation_system_zh.md` — 对话系统：当前为 Orchestrator-Workers（GeneralAgent ReAct）
+  架构；旧的 Planner→Executor→Reflector 规划器已移除。
 - `note/signal_system_zh.md` — 信号系统：来源、检测器、NPS、QBR、邮件发送等全部功能，
   以及当前缺失 / 待完善之处。
 
-Older English notes (`note/conversation_system.md`, `note/signal_system.mmd`) may drift
-from the code; treat the code and this CLAUDE.md as authoritative.
+English notes (`note/conversation_system.md`, `note/signal_system.md`) describe the same
+systems in English. Treat the code and this CLAUDE.md as authoritative.
 
 ## Environment & execution
 
@@ -72,7 +72,7 @@ Run the API gateway (FastAPI: chat + signals + dashboard endpoints) and the sign
 
 ```bash
 uvicorn apps.api_gateway.src.app:app --host 0.0.0.0 --port 8000   # API on :8000
-python -m apps.agent_service.src.rq_worker                        # signal queue drain
+python -m apps.temporal_worker.src.worker                         # Temporal signal worker (drain + schedules)
 ```
 
 Seed tenant playbooks into pgvector and run the live end-to-end verification:
@@ -83,9 +83,9 @@ python scripts/verify_e2e.py        # RAG, query_health, chat, signal bridge, de
 python scripts/smoke_live_api.py    # live OpenRouter smoke: intent + refund/escalation chat turns
 ```
 
-`smoke_live_api.py` exercises real LLM calls (intent recognition, the LLM conversation
-planner, subagents, and the compliance critic) against OpenRouter. It reports each check as
-PASS/FAIL and distinguishes an auth/connectivity failure from a normal critic block, so it
+`smoke_live_api.py` exercises real LLM calls (intent recognition plus full chat turns
+through the GeneralAgent conversation loop) against OpenRouter. It reports each check as
+PASS/FAIL and distinguishes an auth/connectivity failure from a normal turn failure, so it
 doubles as an "is the API key + network working" probe.
 
 Frontend (Vite + React chat + signal dashboard; built separately, not a Python module):
@@ -121,18 +121,21 @@ runtime facts:
 ### Two orchestrators, one shared runtime
 
 All agent work enters `apps/agent_service` through one of two top-level orchestrators,
-both subclassing `BaseOrchestrator` (`apps/agent_service/src/agent/orchestrator/base.py`),
-which implements a shared **Planner → Executor → Reflector** lifecycle in `BaseOrchestrator.run()`:
+both subclassing `BaseOrchestrator` (`apps/agent_service/src/agent/orchestrator/base.py`).
+`BaseOrchestrator.run()` implements a **Planner → Executor → Reflector** lifecycle that the
+**signal** path uses; the **conversation** path runs the Orchestrator-Workers loop instead (see below):
 
 | Orchestrator | Input | `supports_external_writes` | Path |
 |---|---|---|---|
 | `SignalOrchestrator` (`agent/signal/`) | `SignalAgentInput` / `CustomerSignal` | `True` — can send email/Slack | proactive backend automation |
 | `ConversationOrchestrator` (`agent/conversation/`) | `ConversationAgentInput` / `ChatMessage` | `False` — chat only, no external writes | customer chat turns |
 
-Subclasses supply only the domain-specific hooks (`load_config`, `build_plan`,
-`load_memory_excerpt`, `on_approved`). The shared lifecycle — delegation, compliance
-review, decision finalization, response assembly — is **not** duplicated; it lives in
-`base.py`. When editing lifecycle behavior, change `base.py`, not the subclasses.
+The signal orchestrator supplies the domain-specific P-E-R hooks (`load_config`, `build_plan`,
+`load_memory_excerpt`, `on_approved`); the shared lifecycle — delegation, compliance review,
+decision finalization, response assembly — is **not** duplicated and lives in `base.py`. The
+conversation orchestrator reuses only the config/memory hooks and drives the GeneralAgent loop
+instead (its `build_plan` is an unused stub; post-turn side effects live in
+`_apply_loop_side_effects`).
 
 ### Executor: ephemeral subagents
 
@@ -153,23 +156,18 @@ specialists (`agent/subagents/__init__.py::role_map_for_domain`):
 The compliance critic is **not** a delegated subagent — it is the Reflector phase invoked
 directly by the orchestrator (see below).
 
-### Planner: LLM role selection with deterministic fallback
+### Conversation path: Orchestrator-Workers (GeneralAgent ReAct)
 
-`ConversationOrchestrator` builds its plan in `conversation/conversation_planner.py`.
-After intent/urgency/entity extraction, an **LLM planner** (`conversation/llm_planner.py`)
-semantically selects which specialist roles answer the turn, given a compact **capability
-catalog** (`conversation/capability_catalog.py`) built from each role's skill *description*
-(not the full SKILL.md body). Only trusted Python converts the validated role list into
-tasks — the LLM never chooses tools, dependencies, or fan-out.
+The conversation system was migrated off the P-E-R planner. `ConversationOrchestrator` now runs a
+`ConversationLoop` (`conversation/conversation_loop.py`) — a single GeneralAgent bounded ReAct loop
+that decides delegation itself via the `delegate_billing` / `delegate_technical` / `delegate_escalation`
+tools, embeds the compliance/PII/tone/grounding rules in its `SKILL.md` (no separate critic LLM call),
+and streams the final answer. The old `conversation_planner.py` / `llm_planner.py` / `capability_catalog.py`
+are deleted. See `note/conversation_system.md` for the full design.
 
-Safety rails, all enforced in code regardless of model output: a fixed role allowlist
-(signal-only roles are unselectable), forced escalation on CRITICAL urgency / explicit
-human-handoff, per-role tool grants (`_ROLE_TOOLS`), and a hard cap on answer roles. The
-planner falls back to the deterministic `_route_roles()` keyword/intent router whenever
-the LLM call fails, times out, returns malformed/low-confidence/invalid JSON, or picks an
-unsupported role. The LLM planner is **on by default**; set `CONVERSATION_LLM_PLANNER=0`
-to force the deterministic path (tests use this to stay hermetic). The planner call
-timeout is generous (planner models can take ~15–20s); a timeout logs and falls back.
+The **signal** system keeps the deterministic planner: `signal_planner.py::build_signal_plan` builds the
+`health_analysis → playbook_retrieval → outreach_draft` chain, and the signal path still runs the separate
+`ComplianceCriticAgent` reflector (below).
 
 ### Reflector: the compliance gate
 
@@ -184,13 +182,16 @@ Its system persona is loaded from `skills/<tenant>/compliance_critic/SKILL.md` v
 `SkillManager.persona_for("compliance_critic")`, with a short in-code string as fallback
 when the skills dir is unavailable.
 
-### on_approved side effects (non-blocking profile update)
+### Post-answer side effects (non-blocking profile update)
 
-`ConversationOrchestrator.on_approved` records the turn to memory and then **fire-and-forgets**
-the customer-profile update (`asyncio.create_task`, tracked in a task set with a
-done-callback that logs — never raises — failures). The profile update runs an LLM distill
-plus DB writes, so it must **not** block the customer's reply. A failure there (e.g. DB
-down) is swallowed and does not fail the turn.
+The conversation path runs its post-answer side effects in
+`conversation_orchestrator.py::_apply_loop_side_effects`: it records the turn to memory and
+**fire-and-forgets** the customer-profile update (tracked in a task set with a done-callback
+that logs — never raises — failures). The profile update runs an LLM distill plus DB writes,
+so it must **not** block the customer's reply; a failure there (e.g. DB down) is swallowed and
+does not fail the turn. Negative/escalation turns also enqueue the conversation→signal bridge
+(see `_enqueue_negative_sentiment_signal`). The signal path keeps `on_approved` for the same
+purpose (releasing compliance-approved external writes).
 
 ### Tool boundaries (security-critical)
 
@@ -198,7 +199,7 @@ Tools are split into two enforced boundaries in `packages/tool_system/src/regist
 - `ToolBoundary.INTERNAL` — read-only analysis, run in-process (`query_health`,
   `query_playbooks`, plus the read-only prototypes `check_human_availability` and
   `process_refund`).
-- `ToolBoundary.MCP_ACTION` — side-effecting external writes (`send_email`, `send_slack`,
+- `ToolBoundary.MCP_ACTION` — side-effecting external writes (`send_email`,
   `escalate_to_human`), which run **only** through the separate `apps/tool_gateway` MCP
   process.
 
@@ -258,16 +259,16 @@ Every layer filters by `tenant_id`: Postgres RLS, Redis key prefixing
 trusted context rather than the LLM-generated payload. Treat any code that could leak one
 tenant's data to another as a bug.
 
-### Conversation latency redesign (scaffolded, not wired)
+### Conversation path (Orchestrator-Workers — the live path)
 
 `apps/agent_service/src/agent/conversation/conversation_loop.py` (`ConversationLoop`) and
-`delegates.py` implement a **proposed** lower-latency conversation architecture: a single
-GeneralAgent running a bounded ReAct loop, calling specialists as tools (`delegate_billing`
-/ `delegate_technical` / `delegate_escalation`), with compliance rules embedded in its
-SKILL.md (no separate critic call) and real token streaming. It is **not yet wired into the
-running path** — `chat_handler.py` still calls `run_conversation_agent` →
-`ConversationOrchestrator.run()` (the P-E-R pipeline described above). See
-`note/conversation_system_zh.md` and `tests/test_conversation_loop.py` for the full design.
+`delegates.py` implement the conversation architecture now in use: a single GeneralAgent
+running a bounded ReAct loop, calling specialists as tools (`delegate_billing` /
+`delegate_technical` / `delegate_escalation`), with compliance rules embedded in its
+SKILL.md (no separate critic call) and real token streaming. `chat_handler.py` calls
+`run_conversation_loop` / `stream_conversation_loop`; the old P-E-R planner
+(`run_conversation_agent` / `conversation_planner.py`) was removed. See
+`note/conversation_system.md` and `tests/test_conversation_loop.py` for the design.
 
 ## Conventions
 
@@ -286,9 +287,11 @@ running path** — `chat_handler.py` still calls `run_conversation_agent` →
 
 ## Deferred / stubs
 
-- `apps/temporal_worker/src/temporal.py` is an intentional empty stub — Temporal
-  (durable long-waits) and Langfuse (tracing depth) are **deferred** until later; the app
-  runs without them. See `docs/AGENT_PLAN.md`.
+- Temporal is **now used** for signal orchestration: `apps/temporal_worker/src/` holds the
+  worker (`worker.py`), workflows (`workflows.py`, `nps_workflows.py`, `qbr_workflows.py`),
+  activities, and schedule creation (scan/NPS/QBR). What remains deferred is Temporal
+  **durable long-waits** (`packages/session`, e.g. "wait 48h then follow up") and Langfuse
+  tracing depth.
 - `infra/k8s` and `infra/terraform` described in the README do not exist.
 - LangGraph/LangChain are not installed (removed from `requirements.txt`); no code imports
   them yet.
