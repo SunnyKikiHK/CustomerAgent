@@ -3,11 +3,13 @@ flowchart TD
     B -->|Dashboard scan| C[POST /signals/scan]
     B -->|Customer complaint or escalation| D[Conversation-to-signal bridge]
     B -->|Manual API request| E[POST /signals]
+    B -->|NPS detractor 0-6| N0[POST /nps/surveys/{id}/response]
 
-    C --> F[Renewal-risk and low-health detectors]
+    C --> F[Detectors: renewal / low-health / usage-decline / ticket-spike / sentiment]
     F --> G[Signal payload]
     D --> G
     E --> G
+    N0 --> G
 
     G --> H[Start Temporal ProcessSignalWorkflow]
     H --> I[record_signal_queued activity]
